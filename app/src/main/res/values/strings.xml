@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">JARVIS AI</string>
+    <string name="hud_subtitle">PERSONAL SMART AI ASSISTANT // ONLINE</string>
+    <string name="nav_hud">CORE HUD</string>
+    <string name="nav_actions">CONTROL</string>
+    <string name="nav_voice">VOICE LAB</string>
+    <string name="nav_memory">MEMORY</string>
+    <string name="nav_system">SYSTEM</string>
+    <string name="mic_button_desc">Toggle JARVIS Microphone</string>
+    <string name="stop_speaking_desc">Stop JARVIS Speaking</string>
+    <string name="send_command_desc">Send Command to JARVIS</string>
+    <string name="attach_file_desc">Select Document for JARVIS Analysis</string>
+    <string name="placeholder_command">Command JARVIS in English or বাংলা, Boss…</string>
+</resources>

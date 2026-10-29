@@ -1,0 +1,6 @@
+{
+  "name": "JARVIS AI",
+  "description": "Futuristic Iron Man-inspired Personal Smart AI Assistant powered by Google Gemini with Bilingual Bangla/English Voice, ElevenLabs TTS, and Native Android Control.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
