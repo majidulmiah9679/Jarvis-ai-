@@ -125,6 +125,7 @@ fun CoreHudScreen(
     onToggleVoiceChatMode: (Boolean) -> Unit = {},
     onStartLiveVoiceSession: () -> Unit = {},
     onToggleLiveConversation: (Boolean) -> Unit = {},
+    onToggleWakeWord: (Boolean) -> Unit = {},
     onOpenDeviceControlTab: () -> Unit = {},
     onMicClick: () -> Unit,
     onRequestMicPermission: () -> Unit,
@@ -162,6 +163,7 @@ fun CoreHudScreen(
             onOpenSettings = onOpenQuickSettingsTab,
             onMicClick = onMicClick,
             onToggleLiveConversation = onToggleLiveConversation,
+            onToggleWakeWord = onToggleWakeWord,
             onStopSpeaking = onStopSpeaking,
             onSendCommand = onSendCommand,
             onSpeakMessage = onSpeakMessage,
@@ -190,6 +192,7 @@ fun CoreHudScreen(
                 onToggleVoiceChatMode(true)
                 onStartLiveVoiceSession()
             },
+            onToggleWakeWord = onToggleWakeWord,
             onOpenDeviceControl = onOpenDeviceControlTab,
             onOpenSettings = onOpenQuickSettingsTab,
             onRequestMicPermission = onRequestMicPermission,
@@ -210,7 +213,7 @@ fun CoreHudScreen(
  * Matches the CENTER screen in the user's reference photo:
  * - "Welcome 👋 Boss" header with circular frosted icons
  * - "Your AI Creative Journey Starts Up"
- * - Frosted horizontal action pills ("Generate Voice", "Flashlight", "Language", "API Key")
+ * - Frosted horizontal action pills ("Generate Voice", "Hey JARVIS Wake", "Flashlight", "Language", "API Key")
  * - "Start Creating" section with the purple-magenta-amber wave "Voice Studio" hero card +
  *   2 side-by-side square dark cards ("Phone Studio" & "API Key Studio")
  * - "Recent Files / Recent AI Chats" pill list with circular arrow/speaker icons
@@ -226,6 +229,7 @@ private fun StudioHomeDashboard(
     errorBanner: String?,
     onOpenVoiceStudio: () -> Unit,
     onStartVoiceImmediately: () -> Unit,
+    onToggleWakeWord: (Boolean) -> Unit,
     onOpenDeviceControl: () -> Unit,
     onOpenSettings: () -> Unit,
     onRequestMicPermission: () -> Unit,
@@ -393,7 +397,7 @@ private fun StudioHomeDashboard(
             }
         }
 
-        // 3. Horizontal Frosted Pills Row ("Generate Voice", "API Key", "Language", "Flashlight")
+        // 3. Horizontal Frosted Pills Row ("Generate Voice", "Hey JARVIS Wake", "API Key", "Language", "Flashlight")
         item {
             Row(
                 modifier = Modifier
@@ -406,6 +410,12 @@ private fun StudioHomeDashboard(
                     label = if (hudState == VoiceHudState.LISTENING) "Listening…" else "Generate Voice",
                     onClick = onStartVoiceImmediately,
                     testTag = "pill_generate_voice"
+                )
+                FrostedActionPill(
+                    icon = Icons.Filled.AutoAwesome,
+                    label = if (settings.wakeWordEnabled) "\"Hey JARVIS\": ON" else "\"Hey JARVIS\": OFF",
+                    onClick = { onToggleWakeWord(!settings.wakeWordEnabled) },
+                    testTag = "pill_wake_word"
                 )
                 FrostedActionPill(
                     icon = Icons.Filled.Key,
@@ -444,6 +454,7 @@ private fun StudioHomeDashboard(
         item {
             VoiceStudioHeroCard(
                 hudState = hudState,
+                wakeWordEnabled = settings.wakeWordEnabled,
                 onClick = onOpenVoiceStudio
             )
         }
@@ -536,6 +547,7 @@ private fun SmartVoiceAssistantScreen(
     onOpenSettings: () -> Unit,
     onMicClick: () -> Unit,
     onToggleLiveConversation: (Boolean) -> Unit,
+    onToggleWakeWord: (Boolean) -> Unit,
     onStopSpeaking: () -> Unit,
     onSendCommand: (String) -> Unit,
     onSpeakMessage: (String, String) -> Unit,
@@ -631,8 +643,9 @@ private fun SmartVoiceAssistantScreen(
 
         Spacer(modifier = Modifier.height(18.dp))
 
-        // 3. Frosted Pill Badge: `[ ✨ LIVE VOICE ON • EN / বাংলা ]`
+        // 3. Frosted Pill Badges: `[ ✨ LIVE VOICE ON ] [ "Hey JARVIS": ON ] [ EN / বাংলা ]`
         Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -649,14 +662,14 @@ private fun SmartVoiceAssistantScreen(
                     .testTag("live_voice_mode_pill")
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Mic,
                         contentDescription = null,
                         tint = if (isLiveConversationActive) JarvisEmerald else StudioGoldLight,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
@@ -664,6 +677,38 @@ private fun SmartVoiceAssistantScreen(
                         style = MaterialTheme.typography.labelLarge,
                         color = JarvisIceWhite,
                         fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Surface(
+                color = if (settings.wakeWordEnabled) StudioGoldLight.copy(alpha = 0.20f) else StudioGlassFill,
+                shape = RoundedCornerShape(50),
+                border = BorderStroke(
+                    1.dp,
+                    if (settings.wakeWordEnabled) StudioGoldLight else StudioGlassBorder
+                ),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable { onToggleWakeWord(!settings.wakeWordEnabled) }
+                    .testTag("voice_chat_wake_word_pill")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.AutoAwesome,
+                        contentDescription = null,
+                        tint = StudioGoldLight,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = if (settings.wakeWordEnabled) "\"Hey JARVIS\": ON" else "\"Hey JARVIS\": OFF",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = JarvisIceWhite,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }
@@ -678,16 +723,9 @@ private fun SmartVoiceAssistantScreen(
                     .testTag("assistant_badge_pill")
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.AutoAwesome,
-                        contentDescription = null,
-                        tint = StudioGoldLight,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
                     val langCode = when (settings.languageMode) {
                         "BN" -> "বাংলা"
                         "EN" -> "EN"
@@ -991,6 +1029,7 @@ private fun SmartVoiceAssistantScreen(
 @Composable
 private fun VoiceStudioHeroCard(
     hudState: VoiceHudState,
+    wakeWordEnabled: Boolean = true,
     onClick: () -> Unit
 ) {
     Surface(
@@ -1098,7 +1137,11 @@ private fun VoiceStudioHeroCard(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Talk naturally in বাংলা & English",
+                        text = if (wakeWordEnabled) {
+                            "Say \"Hey JARVIS\" or tap • বাংলা & English"
+                        } else {
+                            "Talk naturally in বাংলা & English"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = JarvisIceWhite.copy(alpha = 0.85f)
                     )

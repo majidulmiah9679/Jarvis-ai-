@@ -40,6 +40,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -134,6 +135,7 @@ fun JarvisAppRoot(
     val errorBanner by jarvisViewModel.errorBanner.collectAsStateWithLifecycle()
     val isForegroundServiceRunning by jarvisViewModel.isForegroundServiceRunning.collectAsStateWithLifecycle()
     val isLiveConversationActive by jarvisViewModel.isLiveConversationActive.collectAsStateWithLifecycle()
+    val wakeWordTriggeredUiPulse by jarvisViewModel.wakeWordTriggeredUiPulse.collectAsStateWithLifecycle()
     val activeNotifications by JarvisNotificationListenerService.notifications.collectAsStateWithLifecycle()
 
     // Dedicated Android Permissions & Network Access Handler
@@ -142,6 +144,14 @@ fun JarvisAppRoot(
             jarvisViewModel.refreshTelemetryNow()
         }
     )
+
+    // Automatically open Voice Chat HUD when user says "Hey JARVIS"
+    LaunchedEffect(wakeWordTriggeredUiPulse) {
+        if (wakeWordTriggeredUiPulse > 0L) {
+            currentTab = JarvisTab.HUD
+            isVoiceChatMode = true
+        }
+    }
 
     // BackHandler for secondary tabs or Voice Chat mode to return cleanly to Home Dashboard
     BackHandler(enabled = currentTab != JarvisTab.HUD || isVoiceChatMode) {
@@ -191,6 +201,16 @@ fun JarvisAppRoot(
             }
         } else {
             jarvisViewModel.setLiveConversationMode(false)
+        }
+    }
+
+    val handleToggleWakeWord: (Boolean) -> Unit = { enabled ->
+        if (enabled) {
+            permissionsController.requestMicPermission {
+                jarvisViewModel.updateWakeWordEnabled(true)
+            }
+        } else {
+            jarvisViewModel.updateWakeWordEnabled(false)
         }
     }
 
@@ -289,6 +309,7 @@ fun JarvisAppRoot(
                                 onToggleVoiceChatMode = { isVoiceChatMode = it },
                                 onStartLiveVoiceSession = handleStartLiveVoiceSession,
                                 onToggleLiveConversation = handleToggleLiveConversation,
+                                onToggleWakeWord = handleToggleWakeWord,
                                 onOpenDeviceControlTab = { currentTab = JarvisTab.CONTROL },
                                 onMicClick = handleMicAction,
                                 onRequestMicPermission = {
@@ -416,6 +437,7 @@ fun JarvisAppRoot(
                                 onUpdateAutoSpeak = { enabled ->
                                     jarvisViewModel.updateAutoSpeak(enabled)
                                 },
+                                onUpdateWakeWord = handleToggleWakeWord,
                                 onTestAiBrain = {
                                     currentTab = JarvisTab.HUD
                                     isVoiceChatMode = true

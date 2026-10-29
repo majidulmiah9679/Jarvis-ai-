@@ -394,6 +394,7 @@ fun SystemStatusScreen(
     ) -> Unit,
     onUpdateLanguageMode: (String) -> Unit,
     onUpdateAutoSpeak: (Boolean) -> Unit,
+    onUpdateWakeWord: (Boolean) -> Unit = {},
     onTestAiBrain: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -830,6 +831,34 @@ fun SystemStatusScreen(
                             checked = settings.autoSpeakReplies,
                             onCheckedChange = onUpdateAutoSpeak,
                             colors = SwitchDefaults.colors(checkedThumbColor = StudioGoldLight)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Wake Word (\"Hey JARVIS\")",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = JarvisIceWhite,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Triggers AI listening mode when you say \"Hey JARVIS\" or \"হেই জারভিস\".",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = StudioSubtleText
+                            )
+                        }
+                        Switch(
+                            checked = settings.wakeWordEnabled,
+                            onCheckedChange = onUpdateWakeWord,
+                            colors = SwitchDefaults.colors(checkedThumbColor = JarvisEmerald),
+                            modifier = Modifier.testTag("wake_word_switch")
                         )
                     }
                 }

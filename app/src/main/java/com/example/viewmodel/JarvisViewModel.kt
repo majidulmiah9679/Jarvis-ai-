@@ -23,6 +23,8 @@ import com.example.util.LanguageDetectionResult
 import com.example.voice.JarvisVoiceManager
 import com.example.voice.TtsLocaleDiagnostics
 import com.example.voice.VoiceHudState
+import com.example.voice.WakeWordDetector
+import com.example.voice.WakeWordMatchResult
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +51,9 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         scope = viewModelScope,
         onSpeechResult = { recognizedText ->
             handleRecognizedSpeech(recognizedText)
+        },
+        onWakeWordTriggered = { matchedTrigger, isBangla, trailingCommand ->
+            handleWakeWordTriggered(matchedTrigger, isBangla, trailingCommand)
         }
     )
 
@@ -84,7 +89,12 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     val ttsDiagnostics: StateFlow<TtsLocaleDiagnostics> = voiceManager.ttsDiagnostics
     val lastDetectedLanguage: StateFlow<LanguageDetectionResult> = voiceManager.lastDetectedLanguage
     val isLiveConversationActive: StateFlow<Boolean> = voiceManager.isLiveConversationActive
+    val isWakeWordStandbyActive: StateFlow<Boolean> = voiceManager.isWakeWordStandbyActive
+    val lastWakeWordEvent: StateFlow<String> = voiceManager.lastWakeWordEvent
     val isForegroundServiceRunning: StateFlow<Boolean> = JarvisVoiceForegroundService.isRunning
+
+    private val _wakeWordTriggeredUiPulse = MutableStateFlow(0L)
+    val wakeWordTriggeredUiPulse: StateFlow<Long> = _wakeWordTriggeredUiPulse.asStateFlow()
 
     private val _telemetry = MutableStateFlow(actionExecutor.getLiveTelemetry())
     val telemetry: StateFlow<DeviceTelemetry> = _telemetry.asStateFlow()
@@ -102,11 +112,11 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _followUpSuggestions = MutableStateFlow(
         listOf(
+            "Hey JARVIS",
             "Status report, Jarvis",
             "ফ্ল্যাশলাইট চালু করো",
             "Set alarm for 07:00",
-            "ব্যাটারি কত শতাংশ আছে?",
-            "Open Android Settings"
+            "ব্যাটারি কত শতাংশ আছে?"
         )
     )
     val followUpSuggestions: StateFlow<List<String>> = _followUpSuggestions.asStateFlow()
@@ -118,6 +128,11 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             settings.collect { current ->
                 voiceManager.updateSettings(current)
+                if (current.wakeWordEnabled && _telemetry.value.hasMicPermission && voiceManager.hudState.value == VoiceHudState.IDLE) {
+                    voiceManager.startWakeWordStandby(current.languageMode)
+                } else if (!current.wakeWordEnabled) {
+                    voiceManager.stopWakeWordStandby()
+                }
             }
         }
 
@@ -128,8 +143,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 repository.addMessage(
                     ChatMessageEntity(
                         role = "jarvis",
-                        text = "Good day, Boss. JARVIS online. All neural, voice, and Android telemetry systems are operational. You may speak or type in English or বাংলা.",
-                        detailedText = "Try saying: 'Status report', 'Turn on flashlight', 'Set timer for 2 minutes', 'Open YouTube', or 'ফ্ল্যাশলাইট চালু করো'.",
+                        text = "Good day, Boss. JARVIS online. Say \"Hey JARVIS\" or \"হেই জারভিস\" anytime to trigger AI listening mode, or speak/type in English or বাংলা.",
+                        detailedText = "Try saying: 'Hey JARVIS', 'Hey JARVIS turn on flashlight', 'Status report', or 'ফ্ল্যাশলাইট চালু করো'.",
                         language = "en",
                         actionName = "status_report",
                         actionStatus = "ONLINE"
@@ -148,32 +163,101 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun refreshTelemetryNow() {
-        _telemetry.value = actionExecutor.getLiveTelemetry()
+        val currentTelemetry = actionExecutor.getLiveTelemetry()
+        _telemetry.value = currentTelemetry
+        if (currentTelemetry.hasMicPermission &&
+            settings.value.wakeWordEnabled &&
+            voiceManager.hudState.value == VoiceHudState.IDLE
+        ) {
+            voiceManager.startWakeWordStandby(settings.value.languageMode)
+        }
     }
 
     fun dismissErrorBanner() {
         _errorBanner.value = null
     }
 
-    private fun handleRecognizedSpeech(transcript: String) {
+    private fun handleWakeWordTriggered(
+        matchedTrigger: String,
+        isBangla: Boolean,
+        trailingCommand: String?
+    ) {
+        _errorBanner.value = null
+        _wakeWordTriggeredUiPulse.value = System.currentTimeMillis()
+        voiceManager.setLiveConversationActive(true)
+
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.logAction(
+                toolName = "wake_word_detected",
+                target = matchedTrigger,
+                parametersSummary = trailingCommand ?: "Wake Word Triggered Active Listening",
+                status = "ACTIVE",
+                details = "Wake word '$matchedTrigger' activated JARVIS AI listening mode"
+            )
+        }
+
+        if (!trailingCommand.isNullOrBlank()) {
+            sendCommand(trailingCommand)
+            return
+        }
+
+        // User said "Hey JARVIS" / "হেই জারভিস" to wake up the assistant:
+        // Immediately enter active AI listening mode (with a quick acknowledgement if autoSpeak is on)
         val current = settings.value
+        val useBangla = isBangla || current.languageMode == "BN" || lastDetectedLanguage.value.isBangla
+        val wakeReply = if (useBangla) {
+            "জি বস, বলুন আমি শুনছি।"
+        } else {
+            "Yes, ${current.bossTitle}? I'm listening."
+        }
+
+        if (current.autoSpeakReplies) {
+            voiceManager.speak(
+                text = wakeReply,
+                languageHint = if (useBangla) "bn" else "en",
+                settings = current,
+                onComplete = {
+                    voiceManager.startListening(
+                        languageMode = settings.value.languageMode,
+                        wakeWordStandbyOnly = false
+                    )
+                }
+            )
+        } else {
+            voiceManager.startListening(
+                languageMode = current.languageMode,
+                wakeWordStandbyOnly = false
+            )
+        }
+    }
+
+    private fun handleRecognizedSpeech(transcript: String) {
         val trimmed = transcript.trim()
         if (trimmed.isBlank()) return
 
-        // If wake-word filter is active in hands-free mode, strip leading "Jarvis" / "Hey Jarvis"
-        val cleanedCommand = trimmed
-            .replace(Regex("^(hey\\s+jarvis|ok\\s+jarvis|hello\\s+jarvis|হেই\\s+জারভিস|জারভিস)[,\\s]*", RegexOption.IGNORE_CASE), "")
-            .trim()
-            .ifBlank { trimmed }
-
-        sendCommand(cleanedCommand)
+        when (val wakeAnalysis = WakeWordDetector.analyzeTranscript(trimmed)) {
+            is WakeWordMatchResult.WakeWordOnly -> {
+                handleWakeWordTriggered(
+                    matchedTrigger = wakeAnalysis.matchedTrigger,
+                    isBangla = wakeAnalysis.isBanglaTrigger,
+                    trailingCommand = null
+                )
+            }
+            is WakeWordMatchResult.WakeWordWithCommand -> {
+                _wakeWordTriggeredUiPulse.value = System.currentTimeMillis()
+                sendCommand(wakeAnalysis.command)
+            }
+            is WakeWordMatchResult.NoWakeWord -> {
+                sendCommand(trimmed)
+            }
+        }
     }
 
     fun startVoiceListening() {
         _errorBanner.value = null
         refreshTelemetryNow()
         voiceManager.setLiveConversationActive(true)
-        voiceManager.startListening(settings.value.languageMode)
+        voiceManager.startListening(settings.value.languageMode, wakeWordStandbyOnly = false)
     }
 
     fun startLiveVoiceGreetingAndListen() {
@@ -193,7 +277,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             settings = current,
             onComplete = {
                 if (voiceManager.isLiveConversationActive.value) {
-                    voiceManager.startListening(settings.value.languageMode)
+                    voiceManager.startListening(settings.value.languageMode, wakeWordStandbyOnly = false)
                 }
             }
         )
@@ -204,6 +288,9 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         if (!enabled) {
             voiceManager.stopListening()
             voiceManager.stopSpeaking()
+            if (settings.value.wakeWordEnabled && _telemetry.value.hasMicPermission) {
+                voiceManager.startWakeWordStandby(settings.value.languageMode)
+            }
         }
     }
 
@@ -298,8 +385,25 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun sendCommand(rawCommand: String) {
-        val prompt = rawCommand.trim()
-        if (prompt.isBlank()) return
+        val rawTrimmed = rawCommand.trim()
+        if (rawTrimmed.isBlank()) return
+
+        // If the user typed or tapped "Hey JARVIS" by itself, trigger AI listening mode directly
+        val wakeCheck = WakeWordDetector.analyzeTranscript(rawTrimmed)
+        if (wakeCheck is WakeWordMatchResult.WakeWordOnly && _attachedDocumentName.value == null) {
+            voiceManager.playWakeWordChime()
+            handleWakeWordTriggered(
+                matchedTrigger = wakeCheck.matchedTrigger,
+                isBangla = wakeCheck.isBanglaTrigger,
+                trailingCommand = null
+            )
+            return
+        }
+
+        val prompt = when (wakeCheck) {
+            is WakeWordMatchResult.WakeWordWithCommand -> wakeCheck.command
+            else -> rawTrimmed
+        }
 
         _errorBanner.value = null
         voiceManager.setProcessingState()
@@ -623,16 +727,35 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         preferencesRepository.updateAutoSpeak(enabled)
     }
 
+    fun updateWakeWordEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.updateWakeWordEnabled(enabled)
+            if (enabled) {
+                if (_telemetry.value.hasMicPermission) {
+                    voiceManager.startWakeWordStandby(settings.value.languageMode)
+                }
+            } else {
+                voiceManager.stopWakeWordStandby()
+            }
+        }
+    }
+
     fun toggleHandsFreeService(enable: Boolean) {
         viewModelScope.launch {
             preferencesRepository.updateHandsFreeMode(enable)
             val app = getApplication<Application>()
             if (enable) {
-                JarvisVoiceForegroundService.start(app)
-                voiceManager.startListening(settings.value.languageMode)
+                JarvisVoiceForegroundService.start(
+                    app,
+                    "Wake Word \"Hey JARVIS\" & Hands-Free Voice Link Active"
+                )
+                voiceManager.startListening(settings.value.languageMode, wakeWordStandbyOnly = false)
             } else {
                 JarvisVoiceForegroundService.stop(app)
                 voiceManager.stopListening()
+                if (settings.value.wakeWordEnabled && _telemetry.value.hasMicPermission) {
+                    voiceManager.startWakeWordStandby(settings.value.languageMode)
+                }
             }
         }
     }
