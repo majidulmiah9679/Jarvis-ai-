@@ -38,6 +38,14 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+enum class VoiceFeatureMode {
+    /** Feature 1: আমার কথা শুনবে (Listens to user's voice, transcribes & executes silently) */
+    LISTEN_ONLY,
+
+    /** Feature 2: আমার কথা শুনে কথা বলবে (Listens to user's voice and speaks back out loud) */
+    LISTEN_AND_SPEAK
+}
+
 class JarvisViewModel(application: Application) : AndroidViewModel(application) {
 
     private val database = JarvisDatabase.getInstance(application)
@@ -93,6 +101,12 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     val lastWakeWordEvent: StateFlow<String> = voiceManager.lastWakeWordEvent
     val isForegroundServiceRunning: StateFlow<Boolean> = JarvisVoiceForegroundService.isRunning
 
+    private val _voiceFeatureMode = MutableStateFlow(VoiceFeatureMode.LISTEN_AND_SPEAK)
+    val voiceFeatureMode: StateFlow<VoiceFeatureMode> = _voiceFeatureMode.asStateFlow()
+
+    private val _lastHeardTranscript = MutableStateFlow("")
+    val lastHeardTranscript: StateFlow<String> = _lastHeardTranscript.asStateFlow()
+
     private val _wakeWordTriggeredUiPulse = MutableStateFlow(0L)
     val wakeWordTriggeredUiPulse: StateFlow<Long> = _wakeWordTriggeredUiPulse.asStateFlow()
 
@@ -128,9 +142,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             settings.collect { current ->
                 voiceManager.updateSettings(current)
-                if (current.wakeWordEnabled && _telemetry.value.hasMicPermission && voiceManager.hudState.value == VoiceHudState.IDLE) {
-                    voiceManager.startWakeWordStandby(current.languageMode)
-                } else if (!current.wakeWordEnabled) {
+                if (!current.wakeWordEnabled && voiceManager.isWakeWordStandbyActive.value) {
                     voiceManager.stopWakeWordStandby()
                 }
             }
@@ -143,8 +155,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 repository.addMessage(
                     ChatMessageEntity(
                         role = "jarvis",
-                        text = "Good day, Boss. JARVIS online. Say \"Hey JARVIS\" or \"হেই জারভিস\" anytime to trigger AI listening mode, or speak/type in English or বাংলা.",
-                        detailedText = "Try saying: 'Hey JARVIS', 'Hey JARVIS turn on flashlight', 'Status report', or 'ফ্ল্যাশলাইট চালু করো'.",
+                        text = "Good day, Boss. JARVIS online. Tap the microphone button anytime to speak in English or বাংলা.",
+                        detailedText = "Try saying: 'Hey JARVIS turn on flashlight', 'Status report', or 'ফ্ল্যাশলাইট চালু করো'.",
                         language = "en",
                         actionName = "status_report",
                         actionStatus = "ONLINE"
@@ -163,14 +175,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun refreshTelemetryNow() {
-        val currentTelemetry = actionExecutor.getLiveTelemetry()
-        _telemetry.value = currentTelemetry
-        if (currentTelemetry.hasMicPermission &&
-            settings.value.wakeWordEnabled &&
-            voiceManager.hudState.value == VoiceHudState.IDLE
-        ) {
-            voiceManager.startWakeWordStandby(settings.value.languageMode)
-        }
+        _telemetry.value = actionExecutor.getLiveTelemetry()
     }
 
     fun dismissErrorBanner() {
@@ -234,6 +239,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     private fun handleRecognizedSpeech(transcript: String) {
         val trimmed = transcript.trim()
         if (trimmed.isBlank()) return
+        _lastHeardTranscript.value = trimmed
 
         when (val wakeAnalysis = WakeWordDetector.analyzeTranscript(trimmed)) {
             is WakeWordMatchResult.WakeWordOnly -> {
@@ -253,34 +259,49 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Feature 1: আমার কথা শুনবে (Listen Only Mode)
+     * Listens to the user's speech, transcribes & processes it silently without speaking over the user.
+     */
+    fun startListenOnlyMode() {
+        _errorBanner.value = null
+        _voiceFeatureMode.value = VoiceFeatureMode.LISTEN_ONLY
+        voiceManager.setLiveConversationActive(false)
+        refreshTelemetryNow()
+        voiceManager.startListening(settings.value.languageMode, wakeWordStandbyOnly = false)
+    }
+
+    /**
+     * Feature 2: আমার কথা শুনে কথা বলবে (Listen & Talk Back Mode)
+     * Listens to the user's speech, processes it with AI, and immediately speaks the answer out loud.
+     */
+    fun startListenAndSpeakMode() {
+        _errorBanner.value = null
+        _voiceFeatureMode.value = VoiceFeatureMode.LISTEN_AND_SPEAK
+        viewModelScope.launch {
+            preferencesRepository.updateAutoSpeak(true)
+        }
+        refreshTelemetryNow()
+        voiceManager.startListening(settings.value.languageMode, wakeWordStandbyOnly = false)
+    }
+
+    fun selectVoiceFeatureMode(mode: VoiceFeatureMode) {
+        _voiceFeatureMode.value = mode
+        if (mode == VoiceFeatureMode.LISTEN_AND_SPEAK) {
+            viewModelScope.launch {
+                preferencesRepository.updateAutoSpeak(true)
+            }
+        }
+    }
+
     fun startVoiceListening() {
         _errorBanner.value = null
         refreshTelemetryNow()
-        voiceManager.setLiveConversationActive(true)
         voiceManager.startListening(settings.value.languageMode, wakeWordStandbyOnly = false)
     }
 
     fun startLiveVoiceGreetingAndListen() {
-        _errorBanner.value = null
-        refreshTelemetryNow()
-        voiceManager.setLiveConversationActive(true)
-        val current = settings.value
-        val useBangla = current.languageMode == "BN" || lastDetectedLanguage.value.isBangla
-        val greeting = if (useBangla) {
-            "জি বস, আমি লাইভে আছি এবং আপনার কথা শুনছি। বলুন!"
-        } else {
-            "Live voice connected, ${current.bossTitle}. I am listening—speak naturally in Bangla or English."
-        }
-        voiceManager.speak(
-            text = greeting,
-            languageHint = if (useBangla) "bn" else "en",
-            settings = current,
-            onComplete = {
-                if (voiceManager.isLiveConversationActive.value) {
-                    voiceManager.startListening(settings.value.languageMode, wakeWordStandbyOnly = false)
-                }
-            }
-        )
+        startListenAndSpeakMode()
     }
 
     fun setLiveConversationMode(enabled: Boolean) {
@@ -288,18 +309,18 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         if (!enabled) {
             voiceManager.stopListening()
             voiceManager.stopSpeaking()
-            if (settings.value.wakeWordEnabled && _telemetry.value.hasMicPermission) {
-                voiceManager.startWakeWordStandby(settings.value.languageMode)
-            }
         }
     }
 
     fun stopVoiceListening() {
+        voiceManager.setLiveConversationActive(false)
         voiceManager.stopListening()
     }
 
     fun stopSpeaking() {
+        voiceManager.setLiveConversationActive(false)
         voiceManager.stopSpeaking()
+        voiceManager.stopListening()
     }
 
     fun speakCustomText(text: String, languageHint: String = "en") {
@@ -512,7 +533,12 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     )
 
-                    if (currentSettings.autoSpeakReplies) {
+                    val shouldSpeakAloud = when (_voiceFeatureMode.value) {
+                        VoiceFeatureMode.LISTEN_ONLY -> false
+                        VoiceFeatureMode.LISTEN_AND_SPEAK -> true
+                    }
+
+                    if (shouldSpeakAloud && currentSettings.autoSpeakReplies) {
                         voiceManager.speak(
                             text = decision.spokenReply,
                             languageHint = decision.detectedLanguage,
@@ -522,6 +548,12 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                                     voiceManager.startListening(settings.value.languageMode)
                                 }
                             }
+                        )
+                    } else if (shouldSpeakAloud) {
+                        voiceManager.speak(
+                            text = decision.spokenReply,
+                            languageHint = decision.detectedLanguage,
+                            settings = currentSettings
                         )
                     } else {
                         voiceManager.setIdleState()
@@ -544,7 +576,15 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                             actionStatus = "API_ERROR"
                         )
                     )
-                    voiceManager.setIdleState()
+                    if (_voiceFeatureMode.value == VoiceFeatureMode.LISTEN_AND_SPEAK) {
+                        voiceManager.speak(
+                            text = fallbackText,
+                            languageHint = if (isBanglaInput) "bn" else "en",
+                            settings = currentSettings
+                        )
+                    } else {
+                        voiceManager.setIdleState()
+                    }
                 }
             )
         }

@@ -577,7 +577,7 @@ fun JarvisIridescentVoiceOrb(
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
             animation = tween(
-                durationMillis = if (hudState == VoiceHudState.IDLE) 14000 else 5500,
+                durationMillis = 10000,
                 easing = LinearEasing
             ),
             repeatMode = RepeatMode.Restart
@@ -590,7 +590,7 @@ fun JarvisIridescentVoiceOrb(
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
             animation = tween(
-                durationMillis = if (hudState == VoiceHudState.IDLE) 11000 else 4200,
+                durationMillis = 8000,
                 easing = LinearEasing
             ),
             repeatMode = RepeatMode.Restart
@@ -599,16 +599,11 @@ fun JarvisIridescentVoiceOrb(
     )
 
     val breathingScale by infiniteTransition.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.05f,
+        initialValue = 0.99f,
+        targetValue = 1.02f,
         animationSpec = infiniteRepeatable(
             animation = tween(
-                durationMillis = when (hudState) {
-                    VoiceHudState.LISTENING -> 850
-                    VoiceHudState.PROCESSING -> 650
-                    VoiceHudState.SPEAKING -> 750
-                    VoiceHudState.IDLE -> 2400
-                },
+                durationMillis = 1800,
                 easing = FastOutSlowInEasing
             ),
             repeatMode = RepeatMode.Reverse
@@ -621,7 +616,7 @@ fun JarvisIridescentVoiceOrb(
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
             animation = tween(
-                durationMillis = if (hudState == VoiceHudState.PROCESSING) 1100 else 1600,
+                durationMillis = 1500,
                 easing = FastOutSlowInEasing
             ),
             repeatMode = RepeatMode.Restart
@@ -631,18 +626,18 @@ fun JarvisIridescentVoiceOrb(
 
     val dynamicAudioBoost by animateFloatAsState(
         targetValue = if (hudState == VoiceHudState.LISTENING || hudState == VoiceHudState.SPEAKING) {
-            audioLevel.coerceIn(0.08f, 1.0f) * 0.14f
+            audioLevel.coerceIn(0.05f, 1.0f) * 0.04f
         } else {
             0f
         },
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        animationSpec = spring(stiffness = Spring.StiffnessLow),
         label = "orb_audio_boost"
     )
 
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
-            .size(230.dp)
+            .size(220.dp)
             .clip(CircleShape)
             .clickable { onClick() }
             .testTag("iridescent_voice_orb")

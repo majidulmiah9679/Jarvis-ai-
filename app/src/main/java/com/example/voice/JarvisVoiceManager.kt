@@ -88,6 +88,9 @@ class JarvisVoiceManager(
     private var consecutiveSilenceRetries = 0
     @Volatile
     private var isListeningForWakeWordOnly = false
+    @Volatile
+    private var isRecognizerActive = false
+    private var pendingRetryRunnable: Runnable? = null
 
     private var preferredEnglishLocale: Locale = Locale.UK
     private var preferredBanglaLocale: Locale = Locale.forLanguageTag("bn-BD")
@@ -111,7 +114,7 @@ class JarvisVoiceManager(
     private val _partialTranscript = MutableStateFlow("")
     val partialTranscript: StateFlow<String> = _partialTranscript.asStateFlow()
 
-    private val _voiceStatusMessage = MutableStateFlow("Initializing Android TTS (English & বাংলা) + Neural Voice Link…")
+    private val _voiceStatusMessage = MutableStateFlow("Tap the Mic button to speak in বাংলা or English, Boss.")
     val voiceStatusMessage: StateFlow<String> = _voiceStatusMessage.asStateFlow()
 
     private val _activeVoiceEngineLabel = MutableStateFlow("PHONE TTS // INITIALIZING")
@@ -125,10 +128,10 @@ class JarvisVoiceManager(
     )
     val lastDetectedLanguage: StateFlow<LanguageDetectionResult> = _lastDetectedLanguage.asStateFlow()
 
-    private val _isLiveConversationActive = MutableStateFlow(true)
+    private val _isLiveConversationActive = MutableStateFlow(false)
     val isLiveConversationActive: StateFlow<Boolean> = _isLiveConversationActive.asStateFlow()
 
-    private val _isWakeWordStandbyActive = MutableStateFlow(true)
+    private val _isWakeWordStandbyActive = MutableStateFlow(false)
     val isWakeWordStandbyActive: StateFlow<Boolean> = _isWakeWordStandbyActive.asStateFlow()
 
     private val _lastWakeWordEvent = MutableStateFlow("")
@@ -506,10 +509,16 @@ class JarvisVoiceManager(
         }
     }
 
+    private fun cancelPendingRetry() {
+        pendingRetryRunnable?.let { mainHandler.removeCallbacks(it) }
+        pendingRetryRunnable = null
+    }
+
     fun startListening(
         languageMode: String = currentSettings.languageMode,
         wakeWordStandbyOnly: Boolean = false
     ) {
+        cancelPendingRetry()
         if (!wakeWordStandbyOnly) {
             stopSpeaking()
         }
@@ -518,15 +527,20 @@ class JarvisVoiceManager(
         mainHandler.post {
             try {
                 if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+                    isRecognizerActive = false
                     _voiceStatusMessage.value =
                         "SpeechRecognizer service not available on this device/emulator. Use text input or install Google Speech Services."
                     _hudState.value = VoiceHudState.IDLE
                     return@post
                 }
 
-                try {
-                    speechRecognizer?.cancel()
-                } catch (_: Exception) {
+                // If recognizer is already actively listening, just update the mode without cancelling/restarting
+                if (isRecognizerActive && speechRecognizer != null) {
+                    if (!wakeWordStandbyOnly) {
+                        _hudState.value = VoiceHudState.LISTENING
+                        _voiceStatusMessage.value = "Listening… Speak your command, Boss."
+                    }
+                    return@post
                 }
 
                 if (speechRecognizer == null) {
@@ -551,10 +565,11 @@ class JarvisVoiceManager(
                 }
 
                 _partialTranscript.value = ""
+                isRecognizerActive = true
                 if (wakeWordStandbyOnly) {
                     _hudState.value = VoiceHudState.IDLE
                     _voiceStatusMessage.value =
-                        "Wake Word Active • Say \"Hey JARVIS\" or \"হেই জারভিস\" to start talking."
+                        "Wake Word Ready • Say \"Hey JARVIS\" or tap the Mic button."
                 } else {
                     _hudState.value = VoiceHudState.LISTENING
                     _voiceStatusMessage.value = "Listening ($localeTag)… Speak your command, Boss."
@@ -562,6 +577,7 @@ class JarvisVoiceManager(
                 speechRecognizer?.startListening(intent)
             } catch (e: Exception) {
                 Log.e(TAG, "Error starting SpeechRecognizer", e)
+                isRecognizerActive = false
                 _hudState.value = VoiceHudState.IDLE
                 _voiceStatusMessage.value = "Microphone error: ${e.localizedMessage}"
             }
@@ -569,17 +585,15 @@ class JarvisVoiceManager(
     }
 
     /**
-     * Starts or resumes the passive "Hey JARVIS" wake-word monitoring loop when idle.
+     * Starts a single wake-word listening session only when explicitly requested by user.
      */
     fun startWakeWordStandby(languageMode: String = currentSettings.languageMode) {
         _isWakeWordStandbyActive.value = true
-        if (_hudState.value == VoiceHudState.IDLE) {
-            startListening(languageMode = languageMode, wakeWordStandbyOnly = true)
-        }
     }
 
     fun stopWakeWordStandby() {
         _isWakeWordStandbyActive.value = false
+        cancelPendingRetry()
         if (isListeningForWakeWordOnly) {
             isListeningForWakeWordOnly = false
             stopListening()
@@ -604,7 +618,10 @@ class JarvisVoiceManager(
     }
 
     fun stopListening() {
+        cancelPendingRetry()
         isListeningForWakeWordOnly = false
+        isRecognizerActive = false
+        consecutiveSilenceRetries = 0
         mainHandler.post {
             try {
                 speechRecognizer?.stopListening()
@@ -615,12 +632,14 @@ class JarvisVoiceManager(
                 _hudState.value = VoiceHudState.IDLE
             }
             _audioLevel.value = 0.08f
+            _voiceStatusMessage.value = "Microphone paused. Tap the Mic button whenever you want to speak."
         }
     }
 
     fun setLiveConversationActive(active: Boolean) {
         _isLiveConversationActive.value = active
         if (!active) {
+            cancelPendingRetry()
             consecutiveSilenceRetries = 0
         }
     }
@@ -1003,6 +1022,7 @@ class JarvisVoiceManager(
     private fun createRecognitionListener(): RecognitionListener {
         return object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
+                isRecognizerActive = true
                 if (!isListeningForWakeWordOnly) {
                     _hudState.value = VoiceHudState.LISTENING
                 }
@@ -1015,23 +1035,31 @@ class JarvisVoiceManager(
             }
 
             override fun onRmsChanged(rmsdB: Float) {
-                if (!isListeningForWakeWordOnly) {
+                if (!isListeningForWakeWordOnly && _hudState.value == VoiceHudState.LISTENING) {
                     val normalized = ((rmsdB + 2f) / 12f).coerceIn(0.08f, 1.0f)
-                    _audioLevel.value = normalized
+                    // Smooth audio level so UI never jitters or bounces
+                    _audioLevel.value = (_audioLevel.value * 0.65f + normalized * 0.35f).coerceIn(0.08f, 1.0f)
                 }
             }
 
             override fun onBufferReceived(buffer: ByteArray?) {}
 
             override fun onEndOfSpeech() {
-                _audioLevel.value = 0.1f
+                isRecognizerActive = false
+                _audioLevel.value = 0.08f
             }
 
             override fun onError(error: Int) {
+                // If stopListening() already deactivated the recognizer, ignore trailing ERROR_CLIENT
+                if (!isRecognizerActive && error == SpeechRecognizer.ERROR_CLIENT) {
+                    return
+                }
+                isRecognizerActive = false
+                isListeningForWakeWordOnly = false
                 _audioLevel.value = 0.08f
                 _hudState.value = VoiceHudState.IDLE
 
-                // If recognizer got wedged (BUSY / CLIENT / SERVER_DISCONNECTED), recreate it cleanly
+                // If recognizer got wedged (BUSY / CLIENT / SERVER_DISCONNECTED), recreate it cleanly for next tap
                 if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
                     error == SpeechRecognizer.ERROR_CLIENT ||
                     error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED
@@ -1043,63 +1071,19 @@ class JarvisVoiceManager(
                     speechRecognizer = null
                 }
 
-                if (isListeningForWakeWordOnly) {
-                    if (_isWakeWordStandbyActive.value &&
-                        currentSettings.wakeWordEnabled &&
-                        error != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS
-                    ) {
-                        mainHandler.postDelayed({
-                            if (_isWakeWordStandbyActive.value &&
-                                currentSettings.wakeWordEnabled &&
-                                _hudState.value == VoiceHudState.IDLE
-                            ) {
-                                startListening(
-                                    languageMode = currentSettings.languageMode,
-                                    wakeWordStandbyOnly = true
-                                )
-                            }
-                        }, 850L)
-                    }
-                    return
-                }
-
                 val errorText = when (error) {
-                    SpeechRecognizer.ERROR_NO_MATCH -> "Listening for your voice, Boss… (বলুন \"Hey JARVIS\")"
-                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Waiting for your voice command, Boss…"
+                    SpeechRecognizer.ERROR_NO_MATCH -> "No speech heard. Tap the Mic button to speak, Boss."
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Mic paused after silence. Tap the Mic button to speak, Boss."
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required for voice commands."
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
                         "Speech recognition network error. Check connectivity."
-                    else -> "Voice recognition ready • Say \"Hey JARVIS\"."
+                    else -> "Voice ready • Tap the Mic button to speak."
                 }
                 _voiceStatusMessage.value = errorText
-
-                // If Live Conversation Mode is active and it was just a pause/silence, keep listening automatically
-                if (_isLiveConversationActive.value &&
-                    (error == SpeechRecognizer.ERROR_NO_MATCH ||
-                        error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
-                        error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) &&
-                    consecutiveSilenceRetries < 3
-                ) {
-                    consecutiveSilenceRetries++
-                    mainHandler.postDelayed({
-                        if (_isLiveConversationActive.value && _hudState.value == VoiceHudState.IDLE) {
-                            startListening(currentSettings.languageMode, wakeWordStandbyOnly = false)
-                        }
-                    }, 750L)
-                } else if (currentSettings.wakeWordEnabled &&
-                    _isWakeWordStandbyActive.value &&
-                    error != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS
-                ) {
-                    // Fall back to passive "Hey JARVIS" wake-word standby after silence retries finish
-                    mainHandler.postDelayed({
-                        if (_hudState.value == VoiceHudState.IDLE && currentSettings.wakeWordEnabled) {
-                            startListening(currentSettings.languageMode, wakeWordStandbyOnly = true)
-                        }
-                    }, 900L)
-                }
             }
 
             override fun onResults(results: Bundle?) {
+                isRecognizerActive = false
                 _audioLevel.value = 0.08f
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
                 val primaryTranscript = matches.firstOrNull()?.trim().orEmpty()
@@ -1107,13 +1091,6 @@ class JarvisVoiceManager(
 
                 if (primaryTranscript.isBlank()) {
                     _hudState.value = VoiceHudState.IDLE
-                    if (isListeningForWakeWordOnly && currentSettings.wakeWordEnabled && _isWakeWordStandbyActive.value) {
-                        mainHandler.postDelayed({
-                            if (_hudState.value == VoiceHudState.IDLE) {
-                                startListening(currentSettings.languageMode, wakeWordStandbyOnly = true)
-                            }
-                        }, 600L)
-                    }
                     return
                 }
 
@@ -1163,26 +1140,13 @@ class JarvisVoiceManager(
                     }
 
                     is WakeWordMatchResult.NoWakeWord -> {
-                        if (isListeningForWakeWordOnly) {
-                            // Ignore non-wake background speech while in strict Wake-Word Standby mode
-                            _hudState.value = VoiceHudState.IDLE
-                            _voiceStatusMessage.value =
-                                "Wake Word Standby • Say \"Hey JARVIS\" or \"হেই জারভিস\" to activate."
-                            if (currentSettings.wakeWordEnabled && _isWakeWordStandbyActive.value) {
-                                mainHandler.postDelayed({
-                                    if (_hudState.value == VoiceHudState.IDLE && isListeningForWakeWordOnly) {
-                                        startListening(currentSettings.languageMode, wakeWordStandbyOnly = true)
-                                    }
-                                }, 550L)
-                            }
-                        } else {
-                            consecutiveSilenceRetries = 0
-                            val detected = detectAndConfigureLanguage(primaryTranscript, currentSettings.languageMode)
-                            _voiceStatusMessage.value =
-                                "Detected ${detected.language.nativeLabel} (${detected.ttsLocale.toLanguageTag()}) — processing…"
-                            _hudState.value = VoiceHudState.PROCESSING
-                            onSpeechResult(primaryTranscript)
-                        }
+                        consecutiveSilenceRetries = 0
+                        isListeningForWakeWordOnly = false
+                        val detected = detectAndConfigureLanguage(primaryTranscript, currentSettings.languageMode)
+                        _voiceStatusMessage.value =
+                            "Detected ${detected.language.nativeLabel} (${detected.ttsLocale.toLanguageTag()}) — processing…"
+                        _hudState.value = VoiceHudState.PROCESSING
+                        onSpeechResult(primaryTranscript)
                     }
                 }
             }
@@ -1194,22 +1158,8 @@ class JarvisVoiceManager(
                 val partial = partialList.firstOrNull()?.trim().orEmpty()
                 if (partial.isBlank()) return
 
-                // If in Wake-Word Standby mode, check if the user just said "Hey JARVIS" in real time
-                if (isListeningForWakeWordOnly) {
-                    val wakeCheck = WakeWordDetector.analyzeTranscript(partial)
-                    if (wakeCheck !is WakeWordMatchResult.NoWakeWord) {
-                        // Immediately transition UI into Active Listening state as soon as "Hey JARVIS" is heard!
-                        isListeningForWakeWordOnly = false
-                        _isLiveConversationActive.value = true
-                        _hudState.value = VoiceHudState.LISTENING
-                        _partialTranscript.value = partial
-                        playWakeWordChime()
-                        _voiceStatusMessage.value = "Wake Word Detected! Listening to you, Boss…"
-                    }
-                } else {
-                    _partialTranscript.value = partial
-                    detectAndConfigureLanguage(partial, currentSettings.languageMode)
-                }
+                _partialTranscript.value = partial
+                detectAndConfigureLanguage(partial, currentSettings.languageMode)
             }
 
             override fun onEvent(eventType: Int, params: Bundle?) {}

@@ -88,6 +88,7 @@ import com.example.ui.theme.JarvisEmerald
 import com.example.ui.theme.JarvisIceWhite
 import com.example.ui.theme.JarvisMutedCyan
 import com.example.ui.theme.JarvisObsidian
+import com.example.ui.theme.JarvisVisualTheme
 import com.example.ui.theme.StudioDarkCard
 import com.example.ui.theme.StudioDarkCardBorder
 import com.example.ui.theme.StudioGlassBorder
@@ -101,6 +102,7 @@ import com.example.ui.theme.StudioVioletAccent
 import com.example.util.JarvisPermissionAndNetworkBanner
 import com.example.util.JarvisPermissionsSnapshot
 import com.example.util.LanguageDetectionHelper
+import com.example.viewmodel.VoiceFeatureMode
 import com.example.voice.VoiceHudState
 import kotlin.math.abs
 import kotlin.math.sin
@@ -121,9 +123,15 @@ fun CoreHudScreen(
     followUpSuggestions: List<String>,
     errorBanner: String?,
     isVoiceChatMode: Boolean = false,
-    isLiveConversationActive: Boolean = true,
+    isLiveConversationActive: Boolean = false,
+    voiceFeatureMode: VoiceFeatureMode = VoiceFeatureMode.LISTEN_AND_SPEAK,
+    lastHeardTranscript: String = "",
+    visualTheme: JarvisVisualTheme = JarvisVisualTheme.OCEAN_CYBER,
+    onSelectVisualTheme: (JarvisVisualTheme) -> Unit = {},
     onToggleVoiceChatMode: (Boolean) -> Unit = {},
     onStartLiveVoiceSession: () -> Unit = {},
+    onStartListenOnlyFeature: () -> Unit = {},
+    onStartListenAndSpeakFeature: () -> Unit = {},
     onToggleLiveConversation: (Boolean) -> Unit = {},
     onToggleWakeWord: (Boolean) -> Unit = {},
     onOpenDeviceControlTab: () -> Unit = {},
@@ -152,6 +160,8 @@ fun CoreHudScreen(
             partialTranscript = partialTranscript,
             voiceStatusMessage = voiceStatusMessage,
             isLiveConversationActive = isLiveConversationActive,
+            voiceFeatureMode = voiceFeatureMode,
+            lastHeardTranscript = lastHeardTranscript,
             pendingConfirmation = pendingConfirmation,
             attachedDocumentName = attachedDocumentName,
             followUpSuggestions = followUpSuggestions,
@@ -162,6 +172,8 @@ fun CoreHudScreen(
             },
             onOpenSettings = onOpenQuickSettingsTab,
             onMicClick = onMicClick,
+            onStartListenOnlyFeature = onStartListenOnlyFeature,
+            onStartListenAndSpeakFeature = onStartListenAndSpeakFeature,
             onToggleLiveConversation = onToggleLiveConversation,
             onToggleWakeWord = onToggleWakeWord,
             onStopSpeaking = onStopSpeaking,
@@ -182,16 +194,26 @@ fun CoreHudScreen(
             permissionsSnapshot = permissionsSnapshot,
             settings = settings,
             hudState = hudState,
+            partialTranscript = partialTranscript,
+            lastHeardTranscript = lastHeardTranscript,
+            voiceFeatureMode = voiceFeatureMode,
+            visualTheme = visualTheme,
+            onSelectVisualTheme = onSelectVisualTheme,
             pendingConfirmation = pendingConfirmation,
             errorBanner = errorBanner,
             onOpenVoiceStudio = {
                 onToggleVoiceChatMode(true)
-                onStartLiveVoiceSession()
             },
             onStartVoiceImmediately = {
-                onToggleVoiceChatMode(true)
-                onStartLiveVoiceSession()
+                onStartListenAndSpeakFeature()
             },
+            onStartListenOnlyFeature = {
+                onStartListenOnlyFeature()
+            },
+            onStartListenAndSpeakFeature = {
+                onStartListenAndSpeakFeature()
+            },
+            onStopVoice = onStopSpeaking,
             onToggleWakeWord = onToggleWakeWord,
             onOpenDeviceControl = onOpenDeviceControlTab,
             onOpenSettings = onOpenQuickSettingsTab,
@@ -210,13 +232,14 @@ fun CoreHudScreen(
 }
 
 /**
- * Matches the CENTER screen in the user's reference photo:
- * - "Welcome 👋 Boss" header with circular frosted icons
- * - "Your AI Creative Journey Starts Up"
- * - Frosted horizontal action pills ("Generate Voice", "Hey JARVIS Wake", "Flashlight", "Language", "API Key")
- * - "Start Creating" section with the purple-magenta-amber wave "Voice Studio" hero card +
- *   2 side-by-side square dark cards ("Phone Studio" & "API Key Studio")
- * - "Recent Files / Recent AI Chats" pill list with circular arrow/speaker icons
+ * Brand-New, Simple, Clean & Modern Home Screen UI ("নিউ স্টাইলে নতুনভাবে সিম্পল হোম স্ক্রিন"):
+ * 1. Minimal Top Bar with Greeting, Battery, Language Toggle & Settings
+ * 2. 1-Tap Live Theme Switcher Bar (Ocean Cyber, Emerald Green, Royal Indigo, Gold Onyx)
+ * 3. Simple Central Voice Hub Card with Big Mic Button + 2 Direct Feature Buttons:
+ *    - "🎙️ আমার কথা শুনবে" (Listen Only)
+ *    - "🔊 কথা শুনে কথা বলবে" (Listen & Talk Back)
+ * 4. Always-Visible Simple Type/Ask Box
+ * 5. Clean 2x2 Quick Action Grid (Flashlight, API Key, Phone Control, Hey JARVIS)
  */
 @Composable
 private fun StudioHomeDashboard(
@@ -225,10 +248,18 @@ private fun StudioHomeDashboard(
     permissionsSnapshot: JarvisPermissionsSnapshot,
     settings: JarvisSettings,
     hudState: VoiceHudState,
+    partialTranscript: String,
+    lastHeardTranscript: String,
+    voiceFeatureMode: VoiceFeatureMode,
+    visualTheme: JarvisVisualTheme,
+    onSelectVisualTheme: (JarvisVisualTheme) -> Unit,
     pendingConfirmation: PendingConfirmationAction?,
     errorBanner: String?,
     onOpenVoiceStudio: () -> Unit,
     onStartVoiceImmediately: () -> Unit,
+    onStartListenOnlyFeature: () -> Unit,
+    onStartListenAndSpeakFeature: () -> Unit,
+    onStopVoice: () -> Unit,
     onToggleWakeWord: (Boolean) -> Unit,
     onOpenDeviceControl: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -243,7 +274,6 @@ private fun StudioHomeDashboard(
     onDismissError: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var showQuickInputBar by rememberSaveable { mutableStateOf(false) }
     var quickInputText by rememberSaveable { mutableStateOf("") }
 
     val activeKeyLabel = remember(settings.customGeminiApiKey, settings.secondaryAiApiKey) {
@@ -256,19 +286,23 @@ private fun StudioHomeDashboard(
     }
 
     val langLabel = when (settings.languageMode) {
-        "BN" -> "বাংলা (BN)"
-        "EN" -> "English (EN)"
-        else -> "Auto (EN/বাংলা)"
+        "BN" -> "বাংলা"
+        "EN" -> "EN"
+        else -> "EN/বাংলা"
+    }
+
+    val latestJarvisReply = remember(messages) {
+        messages.lastOrNull { it.role == "jarvis" }
     }
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 110.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = 18.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 104.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1. Welcome Header Row (Avatar + "Welcome 👋" + "Boss" + Frosted BellIcon)
+        // 1. Simple Clean Top Header Row
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -276,18 +310,16 @@ private fun StudioHomeDashboard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Glowing Avatar Circle
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .size(48.dp)
+                            .size(44.dp)
                             .clip(CircleShape)
                             .background(
                                 Brush.linearGradient(
-                                    colors = listOf(StudioGoldLight, StudioVioletAccent, StudioPurpleVibrant)
+                                    colors = listOf(visualTheme.primaryAccent, visualTheme.secondaryAccent)
                                 )
                             )
-                            .border(1.5.dp, Color.White.copy(alpha = 0.45f), CircleShape)
                             .clickable { onOpenSettings() }
                     ) {
                         Text(
@@ -302,72 +334,101 @@ private fun StudioHomeDashboard(
 
                     Column {
                         Text(
-                            text = "Welcome 👋",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = JarvisIceWhite.copy(alpha = 0.78f)
-                        )
-                        Text(
-                            text = "${settings.bossTitle} • JARVIS AI",
+                            text = "হ্যালো, ${settings.bossTitle} 👋",
                             style = MaterialTheme.typography.titleMedium,
                             color = JarvisIceWhite,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "JARVIS AI • 🔋 ${telemetry.batteryPercent}% • $activeKeyLabel",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = StudioSubtleText
                         )
                     }
                 }
 
-                // Right Frosted Circular Button (Notifications / Telemetry)
-                FrostedCircleIconButton(
-                    icon = Icons.Filled.NotificationsNone,
-                    contentDescription = "System Status & Telemetry",
-                    onClick = onOpenDeviceControl,
-                    testTag = "home_bell_button"
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Language Chip
+                    Surface(
+                        color = visualTheme.cardBg,
+                        shape = RoundedCornerShape(50),
+                        border = BorderStroke(1.dp, visualTheme.cardBorder),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .clickable { onCycleLanguageMode() }
+                            .testTag("language_mode_chip")
+                    ) {
+                        Text(
+                            text = langLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = visualTheme.primaryAccent,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
+
+                    // Fullscreen Voice Studio Button
+                    FrostedCircleIconButton(
+                        icon = Icons.Filled.AutoAwesome,
+                        contentDescription = "Open Full Voice Studio",
+                        sizeDp = 40,
+                        onClick = onOpenVoiceStudio,
+                        testTag = "home_bell_button"
+                    )
+                }
             }
         }
 
-        // 2. Hero Title + Right Frosted Search/Input Toggle Button
+        // 2. 1-Tap New Style Theme Switcher Bar ("🎨 থিম পরিবর্তন")
         item {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Your AI Creative\nJourney Starts Up",
-                    style = MaterialTheme.typography.headlineMedium.copy(
-                        fontSize = 27.sp,
-                        lineHeight = 34.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = JarvisIceWhite,
-                    modifier = Modifier.weight(1f)
-                )
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                FrostedCircleIconButton(
-                    icon = Icons.Filled.Search,
-                    contentDescription = "Quick Ask JARVIS",
-                    onClick = { showQuickInputBar = !showQuickInputBar },
-                    testTag = "home_search_button"
-                )
-            }
-        }
-
-        // Optional Expandable Quick Text Input Bar when Search button is tapped
-        item {
-            AnimatedVisibility(visible = showQuickInputBar) {
-                StudioQuickAskBar(
-                    value = quickInputText,
-                    onValueChange = { quickInputText = it },
-                    settings = settings,
-                    onSend = {
-                        if (quickInputText.isNotBlank()) {
-                            onSendCommand(quickInputText)
-                            quickInputText = ""
+                JarvisVisualTheme.entries.forEach { themeOption ->
+                    val selected = themeOption.id == visualTheme.id
+                    Surface(
+                        color = if (selected) {
+                            themeOption.primaryAccent.copy(alpha = 0.20f)
+                        } else {
+                            visualTheme.cardBg.copy(alpha = 0.75f)
+                        },
+                        shape = RoundedCornerShape(50),
+                        border = BorderStroke(
+                            width = if (selected) 1.5.dp else 1.dp,
+                            color = if (selected) themeOption.primaryAccent else visualTheme.cardBorder
+                        ),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .clickable { onSelectVisualTheme(themeOption) }
+                            .testTag("theme_chip_${themeOption.id}")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(themeOption.primaryAccent)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = themeOption.titleBn,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (selected) JarvisIceWhite else StudioSubtleText,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            )
                         }
                     }
-                )
+                }
             }
         }
 
@@ -381,7 +442,6 @@ private fun StudioHomeDashboard(
             )
         }
 
-        // Error Banner or Sensitive Action Confirmation
         if (!errorBanner.isNullOrBlank()) {
             item {
                 ErrorGlassBanner(errorBanner = errorBanner, onDismiss = onDismissError)
@@ -397,139 +457,413 @@ private fun StudioHomeDashboard(
             }
         }
 
-        // 3. Horizontal Frosted Pills Row ("Generate Voice", "Hey JARVIS Wake", "API Key", "Language", "Flashlight")
+        // 3. Centerpiece Simple Voice Assistant Card (With Big Mic + 2 Main Voice Features right on Home!)
         item {
-            Row(
+            val isMicActive = hudState == VoiceHudState.LISTENING || hudState == VoiceHudState.SPEAKING
+            Surface(
+                color = visualTheme.cardBg.copy(alpha = 0.92f),
+                shape = RoundedCornerShape(28.dp),
+                border = BorderStroke(1.5.dp, visualTheme.cardBorder),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    .testTag("voice_studio_hero_card")
             ) {
-                FrostedActionPill(
-                    icon = Icons.Filled.Mic,
-                    label = if (hudState == VoiceHudState.LISTENING) "Listening…" else "Generate Voice",
-                    onClick = onStartVoiceImmediately,
-                    testTag = "pill_generate_voice"
-                )
-                FrostedActionPill(
-                    icon = Icons.Filled.AutoAwesome,
-                    label = if (settings.wakeWordEnabled) "\"Hey JARVIS\": ON" else "\"Hey JARVIS\": OFF",
-                    onClick = { onToggleWakeWord(!settings.wakeWordEnabled) },
-                    testTag = "pill_wake_word"
-                )
-                FrostedActionPill(
-                    icon = Icons.Filled.Key,
-                    label = activeKeyLabel,
-                    onClick = onOpenSettings,
-                    testTag = "pill_api_keys"
-                )
-                FrostedActionPill(
-                    icon = Icons.Filled.Language,
-                    label = langLabel,
-                    onClick = onCycleLanguageMode,
-                    testTag = "language_mode_chip"
-                )
-                FrostedActionPill(
-                    icon = Icons.Filled.FlashlightOn,
-                    label = if (telemetry.isFlashlightOn) "Torch ON" else "Flashlight",
-                    onClick = {
-                        onSendCommand(if (telemetry.isFlashlightOn) "Turn off flashlight" else "Turn on flashlight")
-                    },
-                    testTag = "pill_flashlight"
-                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Status Badge Row
+                    Surface(
+                        color = visualTheme.primaryAccent.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(50),
+                        border = BorderStroke(1.dp, visualTheme.primaryAccent.copy(alpha = 0.45f))
+                    ) {
+                        Text(
+                            text = when (hudState) {
+                                VoiceHudState.LISTENING -> if (voiceFeatureMode == VoiceFeatureMode.LISTEN_ONLY) {
+                                    "🎙️ আপনার কথা শুনছি (Listen Only)…"
+                                } else {
+                                    "🔊 কথা শুনছি ও উত্তর বলব…"
+                                }
+                                VoiceHudState.PROCESSING -> "✨ JARVIS চিন্তা করছে…"
+                                VoiceHudState.SPEAKING -> "🔊 JARVIS কথা বলছে…"
+                                VoiceHudState.IDLE -> "✨ ভয়েস অ্যাসিস্ট্যান্ট প্রস্তুত"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = visualTheme.primaryAccent,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Big Clean Center Microphone Button (Fixed size, never jumps)
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(86.dp)
+                            .clip(CircleShape)
+                            .background(visualTheme.primaryAccent.copy(alpha = 0.16f))
+                            .border(
+                                width = if (isMicActive) 2.5.dp else 1.5.dp,
+                                color = visualTheme.primaryAccent,
+                                shape = CircleShape
+                            )
+                            .clickable {
+                                if (isMicActive) {
+                                    onStopVoice()
+                                } else {
+                                    onStartVoiceImmediately()
+                                }
+                            }
+                            .testTag("pill_generate_voice")
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.linearGradient(
+                                        colors = listOf(visualTheme.primaryAccent, visualTheme.secondaryAccent)
+                                    )
+                                )
+                        ) {
+                            Icon(
+                                imageVector = if (isMicActive) Icons.Filled.Stop else Icons.Filled.Mic,
+                                contentDescription = if (isMicActive) "Stop Voice" else "Tap to Speak",
+                                tint = JarvisObsidian,
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Fixed-height live speech / reply text preview inside the Home Hero Card
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val displayLine = when {
+                            partialTranscript.isNotBlank() -> "শুনছি: “$partialTranscript”"
+                            lastHeardTranscript.isNotBlank() && hudState == VoiceHudState.IDLE ->
+                                "আপনি বলেছেন: “$lastHeardTranscript”"
+                            latestJarvisReply != null -> latestJarvisReply.text
+                            else -> "নিচের যেকোনো বাটনে ট্যাপ করে বাংলা বা ইংরেজিতে কথা বলুন"
+                        }
+                        Text(
+                            text = displayLine,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = JarvisIceWhite.copy(alpha = 0.92f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // TWO DEDICATED SIMPLE FEATURE BUTTONS right inside the Hero Card:
+                    // 1. "আমার কথা শুনবে" (Listen Only)
+                    // 2. "কথা শুনে কথা বলবে" (Listen & Talk Back)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        val isListenOnlyActive =
+                            voiceFeatureMode == VoiceFeatureMode.LISTEN_ONLY && hudState == VoiceHudState.LISTENING
+                        val isListenSpeakActive =
+                            voiceFeatureMode == VoiceFeatureMode.LISTEN_AND_SPEAK &&
+                                (hudState == VoiceHudState.LISTENING || hudState == VoiceHudState.SPEAKING)
+
+                        // Button 1: আমার কথা শুনবে
+                        Surface(
+                            color = if (isListenOnlyActive) {
+                                visualTheme.primaryAccent.copy(alpha = 0.26f)
+                            } else {
+                                Color.White.copy(alpha = 0.06f)
+                            },
+                            shape = RoundedCornerShape(18.dp),
+                            border = BorderStroke(
+                                width = if (voiceFeatureMode == VoiceFeatureMode.LISTEN_ONLY) 1.5.dp else 1.dp,
+                                color = if (voiceFeatureMode == VoiceFeatureMode.LISTEN_ONLY) {
+                                    visualTheme.primaryAccent
+                                } else {
+                                    visualTheme.cardBorder
+                                }
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable { onStartListenOnlyFeature() }
+                                .testTag("card_feature_listen_only")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Mic,
+                                    contentDescription = "আমার কথা শুনবে",
+                                    tint = visualTheme.primaryAccent,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "আমার কথা শুনবে",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = JarvisIceWhite,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "শুধু শুনবে ও লিখবে",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = StudioSubtleText,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        // Button 2: কথা শুনে কথা বলবে
+                        Surface(
+                            color = if (isListenSpeakActive) {
+                                visualTheme.secondaryAccent.copy(alpha = 0.26f)
+                            } else {
+                                Color.White.copy(alpha = 0.06f)
+                            },
+                            shape = RoundedCornerShape(18.dp),
+                            border = BorderStroke(
+                                width = if (voiceFeatureMode == VoiceFeatureMode.LISTEN_AND_SPEAK) 1.5.dp else 1.dp,
+                                color = if (voiceFeatureMode == VoiceFeatureMode.LISTEN_AND_SPEAK) {
+                                    visualTheme.secondaryAccent
+                                } else {
+                                    visualTheme.cardBorder
+                                }
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable { onStartListenAndSpeakFeature() }
+                                .testTag("card_feature_listen_and_speak")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                    contentDescription = "কথা শুনে কথা বলবে",
+                                    tint = visualTheme.secondaryAccent,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "কথা শুনে কথা বলবে",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = JarvisIceWhite,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "শুনে ভয়েসে উত্তর বলবে",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = StudioSubtleText,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        // 4. "Start Creating" Section Header
+        // 4. Always-Visible Simple Type/Ask Input Box on Home Screen
+        item {
+            StudioQuickAskBar(
+                value = quickInputText,
+                onValueChange = { quickInputText = it },
+                settings = settings,
+                onSend = {
+                    if (quickInputText.isNotBlank()) {
+                        onSendCommand(quickInputText)
+                        quickInputText = ""
+                    }
+                }
+            )
+        }
+
+        // 5. Simple 2x2 Quick Control Grid (4 Clean Cards)
         item {
             Text(
-                text = "Start Creating",
-                style = MaterialTheme.typography.titleMedium,
-                color = JarvisIceWhite,
+                text = "কুইক কন্ট্রোল ও সেটিংস",
+                style = MaterialTheme.typography.titleSmall,
+                color = StudioSubtleText,
                 fontWeight = FontWeight.SemiBold
             )
         }
 
-        // 5. Large Featured Gradient Card: "Voice Studio" (with purple-pink-amber vertical waveform)
         item {
-            VoiceStudioHeroCard(
-                hudState = hudState,
-                wakeWordEnabled = settings.wakeWordEnabled,
-                onClick = onOpenVoiceStudio
-            )
-        }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    SimpleHomeControlTile(
+                        icon = Icons.Filled.FlashlightOn,
+                        title = if (telemetry.isFlashlightOn) "ফ্ল্যাশলাইট: ON" else "ফ্ল্যাশলাইট",
+                        subtitle = "টর্চ লাইট চালু/বন্ধ",
+                        accentColor = if (telemetry.isFlashlightOn) visualTheme.primaryAccent else StudioSubtleText,
+                        cardBg = visualTheme.cardBg,
+                        cardBorder = visualTheme.cardBorder,
+                        onClick = {
+                            onSendCommand(if (telemetry.isFlashlightOn) "Turn off flashlight" else "Turn on flashlight")
+                        },
+                        modifier = Modifier.weight(1f),
+                        testTag = "pill_flashlight"
+                    )
+                    SimpleHomeControlTile(
+                        icon = Icons.Filled.Key,
+                        title = "API Key সেটআপ",
+                        subtitle = activeKeyLabel,
+                        accentColor = visualTheme.primaryAccent,
+                        cardBg = visualTheme.cardBg,
+                        cardBorder = visualTheme.cardBorder,
+                        onClick = onOpenSettings,
+                        modifier = Modifier.weight(1f),
+                        testTag = "home_quick_settings_btn"
+                    )
+                }
 
-        // 6. Two Side-by-Side Square Dark Cards ("Phone Studio" & "API Key Studio")
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                StudioSquareFeatureCard(
-                    icon = Icons.Filled.PhoneAndroid,
-                    title = "Phone Studio",
-                    subtitle = "Battery ${telemetry.batteryPercent}% • Apps & Control",
-                    onClick = onOpenDeviceControl,
-                    modifier = Modifier.weight(1f),
-                    testTag = "card_phone_studio"
-                )
-                StudioSquareFeatureCard(
-                    icon = Icons.Filled.Key,
-                    title = "API Key Studio",
-                    subtitle = "Gemini, Groq & All Keys",
-                    onClick = onOpenSettings,
-                    modifier = Modifier.weight(1f),
-                    testTag = "home_quick_settings_btn"
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    SimpleHomeControlTile(
+                        icon = Icons.Filled.PhoneAndroid,
+                        title = "ফোন কন্ট্রোল",
+                        subtitle = "চার্জ ${telemetry.batteryPercent}% • অ্যাপস",
+                        accentColor = visualTheme.secondaryAccent,
+                        cardBg = visualTheme.cardBg,
+                        cardBorder = visualTheme.cardBorder,
+                        onClick = onOpenDeviceControl,
+                        modifier = Modifier.weight(1f),
+                        testTag = "card_phone_studio"
+                    )
+                    SimpleHomeControlTile(
+                        icon = Icons.Filled.AutoAwesome,
+                        title = if (settings.wakeWordEnabled) "Hey JARVIS: ON" else "Hey JARVIS: OFF",
+                        subtitle = "ওয়েক ওয়ার্ড টগল",
+                        accentColor = if (settings.wakeWordEnabled) visualTheme.primaryAccent else StudioSubtleText,
+                        cardBg = visualTheme.cardBg,
+                        cardBorder = visualTheme.cardBorder,
+                        onClick = { onToggleWakeWord(!settings.wakeWordEnabled) },
+                        modifier = Modifier.weight(1f),
+                        testTag = "pill_wake_word"
+                    )
+                }
             }
         }
 
-        // 7. "Recent Files / Recent AI Chats" Header
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        // 6. Recent Replies (Clean & Compact)
+        val recentItems = messages.takeLast(3).reversed()
+        if (recentItems.isNotEmpty()) {
+            item {
                 Text(
-                    text = "Recent Chats & Actions",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = JarvisIceWhite,
+                    text = "সাম্প্রতিক কথোপকথন (Recent Chats)",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = StudioSubtleText,
                     fontWeight = FontWeight.SemiBold
                 )
-                Text(
-                    text = "Voice Chat",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = StudioSubtleText,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onOpenVoiceStudio() }
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
+            }
+            items(recentItems, key = { it.id }) { msg ->
+                RecentConversationPillRow(
+                    message = msg,
+                    bossTitle = settings.bossTitle,
+                    onSpeakClick = { onSpeakMessage(msg.text, msg.language) },
+                    onOpenVoiceChat = onOpenVoiceStudio
                 )
             }
-        }
-
-        // 8. Recent Messages / Quick Commands Pill Rows (matching "Recent Files" in the photo)
-        val recentItems = messages.takeLast(5).reversed()
-        items(recentItems, key = { it.id }) { msg ->
-            RecentConversationPillRow(
-                message = msg,
-                bossTitle = settings.bossTitle,
-                onSpeakClick = { onSpeakMessage(msg.text, msg.language) },
-                onOpenVoiceChat = onOpenVoiceStudio
-            )
         }
     }
 }
 
-/**
- * Matches the RIGHT screen in the user's reference photo ("Voice chat" / "Smart Voice Assistant"):
- * - Top bar: Circular `<` back button, "Voice chat" title, Circular `⋮` settings button
- * - Center: 3D Iridescent Swirling AI Sphere (`JarvisIridescentVoiceOrb`)
- * - Frosted pill badge: `[ ✨ Your Assistant 3.0 ]`
- * - Big centered title: "Smart Voice Assistant" + live spoken reply / transcript
- * - Bottom 3 circular buttons: `[ 💬 Chat ]`  `[ 🎙️ Glowing Gold-Purple Mic ]`  `[ ✕ Stop/Close ]`
- */
+@Composable
+private fun SimpleHomeControlTile(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    accentColor: Color,
+    cardBg: Color,
+    cardBorder: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    testTag: String = ""
+) {
+    Surface(
+        color = cardBg,
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, cardBorder),
+        modifier = modifier
+            .height(78.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .clickable { onClick() }
+            .then(if (testTag.isNotEmpty()) Modifier.testTag(testTag) else Modifier)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(accentColor.copy(alpha = 0.16f))
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = title,
+                    tint = accentColor,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = JarvisIceWhite,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = StudioSubtleText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun SmartVoiceAssistantScreen(
     messages: List<ChatMessageEntity>,
@@ -539,6 +873,8 @@ private fun SmartVoiceAssistantScreen(
     partialTranscript: String,
     voiceStatusMessage: String,
     isLiveConversationActive: Boolean,
+    voiceFeatureMode: VoiceFeatureMode,
+    lastHeardTranscript: String,
     pendingConfirmation: PendingConfirmationAction?,
     attachedDocumentName: String?,
     followUpSuggestions: List<String>,
@@ -546,6 +882,8 @@ private fun SmartVoiceAssistantScreen(
     onBackToHome: () -> Unit,
     onOpenSettings: () -> Unit,
     onMicClick: () -> Unit,
+    onStartListenOnlyFeature: () -> Unit,
+    onStartListenAndSpeakFeature: () -> Unit,
     onToggleLiveConversation: (Boolean) -> Unit,
     onToggleWakeWord: (Boolean) -> Unit,
     onStopSpeaking: () -> Unit,
@@ -604,7 +942,11 @@ private fun SmartVoiceAssistantScreen(
             )
 
             Text(
-                text = "Voice chat • Live",
+                text = if (voiceFeatureMode == VoiceFeatureMode.LISTEN_ONLY) {
+                    "Voice • আমার কথা শুনবে"
+                } else {
+                    "Voice • কথা শুনে কথা বলবে"
+                },
                 style = MaterialTheme.typography.titleMedium,
                 color = JarvisIceWhite,
                 fontWeight = FontWeight.SemiBold
@@ -632,7 +974,7 @@ private fun SmartVoiceAssistantScreen(
             )
         }
 
-        Spacer(modifier = Modifier.weight(0.6f))
+        Spacer(modifier = Modifier.weight(0.5f))
 
         // 2. Center 3D Iridescent Swirling AI Sphere
         JarvisIridescentVoiceOrb(
@@ -641,7 +983,109 @@ private fun SmartVoiceAssistantScreen(
             onClick = onMicClick
         )
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // 2B. NEW: Dual Feature Buttons ("১. আমার কথা শুনবে" | "২. কথা শুনে কথা বলবে")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val isListenOnlySelected = voiceFeatureMode == VoiceFeatureMode.LISTEN_ONLY
+            val isListenSpeakSelected = voiceFeatureMode == VoiceFeatureMode.LISTEN_AND_SPEAK
+
+            Surface(
+                color = if (isListenOnlySelected) JarvisCyan.copy(alpha = 0.22f) else StudioDarkCard.copy(alpha = 0.85f),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(
+                    width = if (isListenOnlySelected) 1.5.dp else 1.dp,
+                    color = if (isListenOnlySelected) JarvisCyan else StudioGlassBorder
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { onStartListenOnlyFeature() }
+                    .testTag("mode_btn_listen_only")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Mic,
+                        contentDescription = null,
+                        tint = if (isListenOnlySelected) JarvisCyan else StudioGoldLight,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Column {
+                        Text(
+                            text = "আমার কথা শুনবে",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = JarvisIceWhite,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "শুধু শুনবে ও লিখবে",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = StudioSubtleText,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            Surface(
+                color = if (isListenSpeakSelected) JarvisEmerald.copy(alpha = 0.22f) else StudioDarkCard.copy(alpha = 0.85f),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(
+                    width = if (isListenSpeakSelected) 1.5.dp else 1.dp,
+                    color = if (isListenSpeakSelected) JarvisEmerald else StudioGlassBorder
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { onStartListenAndSpeakFeature() }
+                    .testTag("mode_btn_listen_and_speak")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = null,
+                        tint = if (isListenSpeakSelected) JarvisEmerald else StudioGoldLight,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Column {
+                        Text(
+                            text = "কথা শুনে কথা বলবে",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = JarvisIceWhite,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "শুনে ভয়েসে উত্তর বলবে",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = StudioSubtleText,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
 
         // 3. Frosted Pill Badges: `[ ✨ LIVE VOICE ON ] [ "Hey JARVIS": ON ] [ EN / বাংলা ]`
         Row(
@@ -740,86 +1184,131 @@ private fun SmartVoiceAssistantScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // 4. Big Centered Heading: "Smart Voice Assistant"
-        Text(
-            text = when (hudState) {
-                VoiceHudState.LISTENING -> "Listening to You,\n${settings.bossTitle}…"
-                VoiceHudState.PROCESSING -> "JARVIS is\nThinking…"
-                VoiceHudState.SPEAKING -> "JARVIS is\nSpeaking…"
-                VoiceHudState.IDLE -> "Smart Voice\nAssistant"
-            },
-            style = MaterialTheme.typography.headlineMedium.copy(
-                fontSize = 30.sp,
-                lineHeight = 36.sp,
-                fontWeight = FontWeight.Bold
-            ),
-            color = JarvisIceWhite,
-            textAlign = TextAlign.Center
-        )
-
         Spacer(modifier = Modifier.height(10.dp))
 
-        // 5. Subtitle or Live Transcript / Latest Spoken Response
-        if (partialTranscript.isNotBlank()) {
+        // 4. Big Centered Heading: "Smart Voice Assistant" (Fixed 2-line height so layout never jumps)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(68.dp),
+            contentAlignment = Alignment.Center
+        ) {
             Text(
-                text = "“$partialTranscript”",
-                style = MaterialTheme.typography.bodyLarge,
-                color = StudioGoldLight,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-        } else if (latestJarvisReply != null) {
-            Surface(
-                color = StudioDarkCard.copy(alpha = 0.82f),
-                shape = RoundedCornerShape(20.dp),
-                border = BorderStroke(1.dp, StudioDarkCardBorder),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSpeakMessage(latestJarvisReply.text, latestJarvisReply.language) }
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = latestJarvisReply.text,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = JarvisIceWhite.copy(alpha = 0.92f),
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                        contentDescription = "Replay voice",
-                        tint = StudioGoldLight,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-        } else {
-            Text(
-                text = voiceStatusMessage.ifBlank {
-                    "Effortlessly chat with your AI bot, enjoying instant and seamless voice interactions."
+                text = when (hudState) {
+                    VoiceHudState.LISTENING -> if (voiceFeatureMode == VoiceFeatureMode.LISTEN_ONLY) {
+                        "আপনার কথা শুনছি,\n${settings.bossTitle}…"
+                    } else {
+                        "কথা শুনছি ও উত্তর দেব,\n${settings.bossTitle}…"
+                    }
+                    VoiceHudState.PROCESSING -> "JARVIS চিন্তা করছে…"
+                    VoiceHudState.SPEAKING -> "JARVIS কথা বলছে…"
+                    VoiceHudState.IDLE -> if (voiceFeatureMode == VoiceFeatureMode.LISTEN_ONLY) {
+                        "আমার কথা শুনবে\n(Listen Mode)"
+                    } else {
+                        "কথা শুনে কথা বলবে\n(Talk Back Mode)"
+                    }
                 },
-                style = MaterialTheme.typography.bodyMedium,
-                color = StudioSubtleText,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 24.dp)
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontSize = 24.sp,
+                    lineHeight = 30.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                color = JarvisIceWhite,
+                textAlign = TextAlign.Center
             )
         }
 
-        // Live Auto-Detected Language & TTS Locale Pill when speaking or typing
-        AnimatedVisibility(visible = activeUtteranceForDetection.isNotBlank()) {
-            Text(
-                text = "Auto-Detected: ${liveDetection.language.nativeLabel} • TTS: ${liveDetection.ttsLocale.toLanguageTag()}",
-                style = MaterialTheme.typography.labelSmall,
-                color = StudioGoldLight,
-                modifier = Modifier.padding(top = 6.dp)
-            )
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // 5. Fixed-Height Subtitle / Live Transcript / Latest Spoken Response Box (Prevents vertical bouncing)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(92.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                if (partialTranscript.isNotBlank()) {
+                    Text(
+                        text = "শুনছি: “$partialTranscript”",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = StudioGoldLight,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                } else if (latestJarvisReply != null) {
+                    Surface(
+                        color = StudioDarkCard.copy(alpha = 0.82f),
+                        shape = RoundedCornerShape(20.dp),
+                        border = BorderStroke(1.dp, StudioDarkCardBorder),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSpeakMessage(latestJarvisReply.text, latestJarvisReply.language) }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                if (lastHeardTranscript.isNotBlank()) {
+                                    Text(
+                                        text = "আপনি বলেছেন: “$lastHeardTranscript”",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = StudioGoldLight,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Text(
+                                    text = latestJarvisReply.text,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = JarvisIceWhite.copy(alpha = 0.92f),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = "Replay voice",
+                                tint = StudioGoldLight,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        text = voiceStatusMessage.ifBlank {
+                            "Tap the microphone button below to speak in বাংলা or English."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = StudioSubtleText,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp)
+                    )
+                }
+
+                if (activeUtteranceForDetection.isNotBlank()) {
+                    Text(
+                        text = "Auto-Detected: ${liveDetection.language.nativeLabel} • TTS: ${liveDetection.ttsLocale.toLanguageTag()}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = StudioGoldLight,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
         }
 
         // Optional Expandable Keyboard Input Bar (when left Chat icon is tapped)
@@ -960,13 +1449,28 @@ private fun SmartVoiceAssistantScreen(
             )
 
             // Center: Glowing Golden-to-Violet Microphone Button with Outer Translucent Halo
+            val isMicOrVoiceActive = hudState == VoiceHudState.LISTENING || hudState == VoiceHudState.SPEAKING
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .size(88.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.08f))
-                    .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
+                    .background(
+                        if (hudState == VoiceHudState.LISTENING) {
+                            JarvisEmerald.copy(alpha = 0.22f)
+                        } else {
+                            Color.White.copy(alpha = 0.08f)
+                        }
+                    )
+                    .border(
+                        width = if (hudState == VoiceHudState.LISTENING) 2.dp else 1.dp,
+                        color = if (hudState == VoiceHudState.LISTENING) {
+                            JarvisEmerald
+                        } else {
+                            Color.White.copy(alpha = 0.16f)
+                        },
+                        shape = CircleShape
+                    )
                     .clickable {
                         if (hudState == VoiceHudState.SPEAKING) {
                             onStopSpeaking()
@@ -983,22 +1487,22 @@ private fun SmartVoiceAssistantScreen(
                         .clip(CircleShape)
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(
-                                    StudioVioletAccent,
-                                    StudioGoldWarm,
-                                    StudioGoldLight
-                                )
+                                colors = if (hudState == VoiceHudState.LISTENING) {
+                                    listOf(JarvisEmerald, StudioGoldWarm, StudioGoldLight)
+                                } else {
+                                    listOf(StudioVioletAccent, StudioGoldWarm, StudioGoldLight)
+                                }
                             )
                         )
                         .border(1.5.dp, Color.White.copy(alpha = 0.55f), CircleShape)
                 ) {
                     Icon(
-                        imageVector = if (hudState == VoiceHudState.SPEAKING) {
+                        imageVector = if (isMicOrVoiceActive) {
                             Icons.Filled.Stop
                         } else {
                             Icons.Filled.Mic
                         },
-                        contentDescription = if (hudState == VoiceHudState.SPEAKING) "Stop Speaking" else "Speak to JARVIS",
+                        contentDescription = if (isMicOrVoiceActive) "Stop Microphone / Voice" else "Speak to JARVIS",
                         tint = JarvisIceWhite,
                         modifier = Modifier.size(28.dp)
                     )
@@ -1146,6 +1650,100 @@ private fun VoiceStudioHeroCard(
                         color = JarvisIceWhite.copy(alpha = 0.85f)
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Highlighted Voice Feature Card for the two requested features:
+ * 1. "আমার কথা শুনবে" (Listen to My Speech)
+ * 2. "কথা শুনে কথা বলবে" (Listen & Talk Back)
+ */
+@Composable
+private fun StudioVoiceFeatureHighlightCard(
+    icon: ImageVector,
+    badgeText: String,
+    title: String,
+    subtitle: String,
+    isActive: Boolean,
+    accentColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    testTag: String = ""
+) {
+    Surface(
+        color = if (isActive) accentColor.copy(alpha = 0.22f) else StudioDarkCard,
+        shape = RoundedCornerShape(26.dp),
+        border = BorderStroke(
+            width = if (isActive) 1.5.dp else 1.dp,
+            color = if (isActive) accentColor else accentColor.copy(alpha = 0.45f)
+        ),
+        modifier = modifier
+            .height(152.dp)
+            .clip(RoundedCornerShape(26.dp))
+            .clickable { onClick() }
+            .testTag(testTag)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(accentColor.copy(alpha = 0.20f))
+                        .border(1.dp, accentColor.copy(alpha = 0.55f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = title,
+                        tint = accentColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Surface(
+                    color = accentColor.copy(alpha = 0.16f),
+                    shape = RoundedCornerShape(50),
+                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.45f))
+                ) {
+                    Text(
+                        text = if (isActive) "ACTIVE" else badgeText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accentColor,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            Column {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = JarvisIceWhite,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = StudioSubtleText,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

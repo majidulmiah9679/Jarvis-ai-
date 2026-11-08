@@ -72,7 +72,7 @@ data class JarvisSettings(
     val speechPitch: Float = 0.95f,
     val autoSpeakReplies: Boolean = true,
     val handsFreeMode: Boolean = false,
-    val wakeWordEnabled: Boolean = true,
+    val wakeWordEnabled: Boolean = false,
     val confirmSensitiveActions: Boolean = true,
     val geminiModel: String = "gemini-3.8-flash"
 )
@@ -117,7 +117,7 @@ class JarvisPreferencesRepository(private val context: Context) {
             speechPitch = prefs[Keys.SPEECH_PITCH] ?: 0.95f,
             autoSpeakReplies = prefs[Keys.AUTO_SPEAK] ?: true,
             handsFreeMode = prefs[Keys.HANDS_FREE] ?: false,
-            wakeWordEnabled = prefs[Keys.WAKE_WORD] ?: true,
+            wakeWordEnabled = prefs[Keys.WAKE_WORD] ?: false,
             confirmSensitiveActions = prefs[Keys.CONFIRM_SENSITIVE] ?: true,
             geminiModel = prefs[Keys.GEMINI_MODEL] ?: "gemini-3.8-flash"
         )

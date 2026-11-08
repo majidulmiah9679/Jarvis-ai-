@@ -71,6 +71,7 @@ import com.example.ui.theme.JarvisIceWhite
 import com.example.ui.theme.JarvisMutedCyan
 import com.example.ui.theme.JarvisObsidian
 import com.example.ui.theme.JarvisSurfaceCard
+import com.example.ui.theme.JarvisVisualTheme
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.StudioDarkCard
 import com.example.ui.theme.StudioGlassBorder
@@ -80,6 +81,7 @@ import com.example.ui.theme.StudioVioletAccent
 import com.example.util.configureAppCheck
 import com.example.util.rememberJarvisPermissionsController
 import com.example.viewmodel.JarvisViewModel
+import com.example.viewmodel.VoiceFeatureMode
 import com.example.voice.VoiceHudState
 
 enum class JarvisTab(
@@ -116,6 +118,9 @@ fun JarvisAppRoot(
 ) {
     var currentTab by rememberSaveable { mutableStateOf(JarvisTab.HUD) }
     var isVoiceChatMode by rememberSaveable { mutableStateOf(false) }
+    var selectedThemeId by rememberSaveable { mutableStateOf(JarvisVisualTheme.OCEAN_CYBER.id) }
+    val activeVisualTheme = JarvisVisualTheme.entries.firstOrNull { it.id == selectedThemeId }
+        ?: JarvisVisualTheme.OCEAN_CYBER
 
     val messages by jarvisViewModel.messages.collectAsStateWithLifecycle()
     val memories by jarvisViewModel.memories.collectAsStateWithLifecycle()
@@ -135,6 +140,8 @@ fun JarvisAppRoot(
     val errorBanner by jarvisViewModel.errorBanner.collectAsStateWithLifecycle()
     val isForegroundServiceRunning by jarvisViewModel.isForegroundServiceRunning.collectAsStateWithLifecycle()
     val isLiveConversationActive by jarvisViewModel.isLiveConversationActive.collectAsStateWithLifecycle()
+    val voiceFeatureMode by jarvisViewModel.voiceFeatureMode.collectAsStateWithLifecycle()
+    val lastHeardTranscript by jarvisViewModel.lastHeardTranscript.collectAsStateWithLifecycle()
     val wakeWordTriggeredUiPulse by jarvisViewModel.wakeWordTriggeredUiPulse.collectAsStateWithLifecycle()
     val activeNotifications by JarvisNotificationListenerService.notifications.collectAsStateWithLifecycle()
 
@@ -183,12 +190,24 @@ fun JarvisAppRoot(
         }
     }
 
-    val handleStartLiveVoiceSession: () -> Unit = {
+    val handleStartListenOnlyFeature: () -> Unit = {
         permissionsController.requestMicPermission {
             permissionsController.verifyNetworkOrPrompt {
-                jarvisViewModel.startLiveVoiceGreetingAndListen()
+                jarvisViewModel.startListenOnlyMode()
             }
         }
+    }
+
+    val handleStartListenAndSpeakFeature: () -> Unit = {
+        permissionsController.requestMicPermission {
+            permissionsController.verifyNetworkOrPrompt {
+                jarvisViewModel.startListenAndSpeakMode()
+            }
+        }
+    }
+
+    val handleStartLiveVoiceSession: () -> Unit = {
+        handleStartListenAndSpeakFeature()
     }
 
     val handleToggleLiveConversation: (Boolean) -> Unit = { enabled ->
@@ -232,11 +251,9 @@ fun JarvisAppRoot(
             .background(
                 Brush.verticalGradient(
                     colorStops = arrayOf(
-                        0.0f to AuroraPeachTop,
-                        0.18f to AuroraRoseMid,
-                        0.38f to AuroraVioletDeep,
-                        0.68f to AuroraDarkPlum,
-                        1.0f to AuroraObsidianBottom
+                        0.0f to activeVisualTheme.topBg,
+                        0.45f to activeVisualTheme.midBg,
+                        1.0f to activeVisualTheme.bottomBg
                     )
                 )
             )
@@ -306,8 +323,14 @@ fun JarvisAppRoot(
                                 errorBanner = errorBanner,
                                 isVoiceChatMode = isVoiceChatMode,
                                 isLiveConversationActive = isLiveConversationActive,
+                                voiceFeatureMode = voiceFeatureMode,
+                                lastHeardTranscript = lastHeardTranscript,
+                                visualTheme = activeVisualTheme,
+                                onSelectVisualTheme = { selectedThemeId = it.id },
                                 onToggleVoiceChatMode = { isVoiceChatMode = it },
                                 onStartLiveVoiceSession = handleStartLiveVoiceSession,
+                                onStartListenOnlyFeature = handleStartListenOnlyFeature,
+                                onStartListenAndSpeakFeature = handleStartListenAndSpeakFeature,
                                 onToggleLiveConversation = handleToggleLiveConversation,
                                 onToggleWakeWord = handleToggleWakeWord,
                                 onOpenDeviceControlTab = { currentTab = JarvisTab.CONTROL },
@@ -448,9 +471,10 @@ fun JarvisAppRoot(
                     }
                 }
 
-                // Floating 3-Icon Pill Bottom Bar (matching the center screen in the reference photo)
+                // Sleek Modern Bottom Navigation Dock
                 if (!isWideScreen) {
                     FloatingStudioBottomPill(
+                        visualTheme = activeVisualTheme,
                         isHomeActive = currentTab == JarvisTab.HUD && !isVoiceChatMode,
                         isVoiceStudioActive = currentTab == JarvisTab.HUD && isVoiceChatMode,
                         isSettingsActive = currentTab == JarvisTab.SYSTEM,
@@ -461,7 +485,6 @@ fun JarvisAppRoot(
                         onSelectVoiceStudio = {
                             currentTab = JarvisTab.HUD
                             isVoiceChatMode = true
-                            handleStartLiveVoiceSession()
                         },
                         onSelectSettings = {
                             currentTab = JarvisTab.SYSTEM
@@ -477,14 +500,9 @@ fun JarvisAppRoot(
     }
 }
 
-/**
- * Floating 3-Button Glassmorphic Pill Navigation Bar matching the bottom dock in the user's photo:
- * - Left: Home (`🏠`)
- * - Middle: Voice Chat / Studio (`🎙️`)
- * - Right: Settings & API Keys (`⚙️`)
- */
 @Composable
 private fun FloatingStudioBottomPill(
+    visualTheme: JarvisVisualTheme,
     isHomeActive: Boolean,
     isVoiceStudioActive: Boolean,
     isSettingsActive: Boolean,
@@ -494,22 +512,24 @@ private fun FloatingStudioBottomPill(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        color = StudioDarkCard.copy(alpha = 0.90f),
+        color = visualTheme.cardBg.copy(alpha = 0.94f),
         shape = RoundedCornerShape(50),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+        border = BorderStroke(1.dp, visualTheme.cardBorder),
         tonalElevation = 12.dp,
         shadowElevation = 12.dp,
         modifier = modifier
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             FloatingPillNavIcon(
                 icon = Icons.Filled.Home,
                 contentDescription = "Home",
                 selected = isHomeActive,
+                accentColor = visualTheme.primaryAccent,
+                secondaryColor = visualTheme.secondaryAccent,
                 onClick = onSelectHome,
                 testTag = "nav_tab_hud"
             )
@@ -517,6 +537,8 @@ private fun FloatingStudioBottomPill(
                 icon = Icons.Filled.GraphicEq,
                 contentDescription = "Voice Studio",
                 selected = isVoiceStudioActive,
+                accentColor = visualTheme.primaryAccent,
+                secondaryColor = visualTheme.secondaryAccent,
                 onClick = onSelectVoiceStudio,
                 testTag = "nav_tab_voice"
             )
@@ -524,6 +546,8 @@ private fun FloatingStudioBottomPill(
                 icon = Icons.Filled.Settings,
                 contentDescription = "Settings & API Keys",
                 selected = isSettingsActive,
+                accentColor = visualTheme.primaryAccent,
+                secondaryColor = visualTheme.secondaryAccent,
                 onClick = onSelectSettings,
                 testTag = "nav_tab_system"
             )
@@ -536,15 +560,13 @@ private fun FloatingPillNavIcon(
     icon: ImageVector,
     contentDescription: String,
     selected: Boolean,
+    accentColor: Color,
+    secondaryColor: Color,
     onClick: () -> Unit,
     testTag: String
 ) {
-    val activeBrush = Brush.verticalGradient(
-        colors = listOf(
-            StudioVioletAccent,
-            StudioGoldWarm,
-            StudioGoldLight
-        )
+    val activeBrush = Brush.linearGradient(
+        colors = listOf(accentColor, secondaryColor)
     )
 
     Box(
@@ -561,7 +583,7 @@ private fun FloatingPillNavIcon(
             )
             .border(
                 width = 1.dp,
-                color = if (selected) Color.White.copy(alpha = 0.45f) else StudioGlassBorder,
+                color = if (selected) Color.White.copy(alpha = 0.55f) else StudioGlassBorder,
                 shape = CircleShape
             )
             .clickable { onClick() }
@@ -570,8 +592,9 @@ private fun FloatingPillNavIcon(
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = JarvisIceWhite,
+            tint = if (selected) JarvisObsidian else JarvisIceWhite,
             modifier = Modifier.size(22.dp)
         )
     }
 }
+

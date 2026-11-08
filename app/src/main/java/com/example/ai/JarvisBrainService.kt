@@ -595,9 +595,11 @@ class JarvisBrainService {
         val lower = userPrompt.lowercase()
         val isBangla = languageDetection.isBangla
         val lang = languageDetection.language.shortCode
+        val nowTime = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+        val nowDate = java.text.SimpleDateFormat("EEEE, dd MMMM yyyy", java.util.Locale.getDefault()).format(java.util.Date())
 
         return when {
-            lower.contains("flashlight") || lower.contains("torch") || lower.contains("ফ্ল্যাশলাইট") || lower.contains("লাইট") -> {
+            lower.contains("flashlight") || lower.contains("torch") || lower.contains("ফ্ল্যাশলাইট") || lower.contains("লাইট") || lower.contains("টর্চ") -> {
                 val turnOff = lower.contains("off") || lower.contains("বন্ধ") || lower.contains("bondho")
                 val target = if (turnOff) "off" else "on"
                 val reply = if (isBangla) {
@@ -634,7 +636,58 @@ class JarvisBrainService {
                 )
             }
 
-            lower.contains("camera") || lower.contains("ক্যামেরা") -> {
+            lower.contains("time") || lower.contains("সময়") || lower.contains("সময়") || lower.contains("কয়টা বাজে") || lower.contains("কয়টা বাজে") || lower.contains("date") || lower.contains("তারিখ") -> {
+                val reply = if (isBangla) {
+                    "জি বস, এখন সময় $nowTime এবং আজকের তারিখ $nowDate।"
+                } else {
+                    "$bossTitle, the current time is $nowTime on $nowDate."
+                }
+                JarvisBrainDecision(
+                    spokenReply = reply,
+                    detailedText = "Local System Clock: $nowTime • $nowDate",
+                    detectedLanguage = lang,
+                    actionName = "none",
+                    actionTarget = "",
+                    actionSecondary = "",
+                    followUpSuggestions = listOf("ব্যাটারি কত শতাংশ?", "ফ্ল্যাশলাইট চালু করো", "Set alarm for 07:00")
+                )
+            }
+
+            lower.contains("কেমন আছ") || lower.contains("kemon acho") || lower.contains("how are you") || lower.contains("কি খবর") -> {
+                val reply = if (isBangla) {
+                    "আমি দারুণ আছি বস! আমার সব এআই এবং ভয়েস সিস্টেম একশ শতাংশ সচল আছে। বলুন, আপনার জন্য কী করতে পারি?"
+                } else {
+                    "All neural and voice systems are operating at peak efficiency, $bossTitle. How may I assist you today?"
+                }
+                JarvisBrainDecision(
+                    spokenReply = reply,
+                    detailedText = "System Status: Online • Battery ${telemetry.batteryPercent}%",
+                    detectedLanguage = lang,
+                    actionName = "none",
+                    actionTarget = "",
+                    actionSecondary = "",
+                    followUpSuggestions = listOf("সময় কত এখন?", "ফ্ল্যাশলাইট চালু করো", "ব্যাটারি কত শতাংশ?")
+                )
+            }
+
+            lower.contains("তোমার নাম") || lower.contains("তুমি কে") || lower.contains("who are you") || lower.contains("your name") || lower.contains("পরিচয়") -> {
+                val reply = if (isBangla) {
+                    "বস, আমি জারভিস — আপনার ব্যক্তিগত স্মার্ট এআই অ্যাসিস্ট্যান্ট। আমি আপনার কথা শুনতে পারি, বাংলা ও ইংরেজিতে কথা বলতে পারি এবং আপনার ফোন কন্ট্রোল করতে পারি।"
+                } else {
+                    "I am JARVIS, your personal smart AI assistant, $bossTitle. I can listen to your voice, speak in Bangla and English, and control your device."
+                }
+                JarvisBrainDecision(
+                    spokenReply = reply,
+                    detailedText = "JARVIS AI • Bilingual Voice Assistant (বাংলা & English)",
+                    detectedLanguage = lang,
+                    actionName = "none",
+                    actionTarget = "",
+                    actionSecondary = "",
+                    followUpSuggestions = listOf("কেমন আছো জারভিস?", "ফ্ল্যাশলাইট চালু করো", "ব্যাটারি স্ট্যাটাস বলো")
+                )
+            }
+
+            lower.contains("camera") || lower.contains("ক্যামেরা") || lower.contains("ছবি") -> {
                 val reply = if (isBangla) "জি বস, ক্যামেরা চালু করছি।" else "Launching the camera for you, $bossTitle."
                 JarvisBrainDecision(
                     spokenReply = reply,
@@ -660,6 +713,19 @@ class JarvisBrainService {
                 )
             }
 
+            lower.contains("whatsapp") || lower.contains("হোয়াটসঅ্যাপ") || lower.contains("হোয়াটসঅ্যাপ") -> {
+                val reply = if (isBangla) "জি বস, হোয়াটসঅ্যাপ ওপেন করছি।" else "Opening WhatsApp now, $bossTitle."
+                JarvisBrainDecision(
+                    spokenReply = reply,
+                    detailedText = fallbackReason,
+                    detectedLanguage = lang,
+                    actionName = "launch_app",
+                    actionTarget = "WhatsApp",
+                    actionSecondary = "",
+                    followUpSuggestions = listOf("Status report", "Open YouTube", "Open Settings")
+                )
+            }
+
             lower.contains("setting") || lower.contains("সেটিংস") -> {
                 val reply = if (isBangla) "জি বস, অ্যান্ড্রয়েড সেটিংস ওপেন করছি।" else "Opening Android Settings, $bossTitle."
                 JarvisBrainDecision(
@@ -675,9 +741,9 @@ class JarvisBrainService {
 
             else -> {
                 val reply = if (isBangla) {
-                    "হ্যালো বস! আমি জারভিস। আপনার ফোনের ব্যাটারি এখন ${telemetry.batteryPercent}%। আপনি Settings-এ গিয়ে যেকোনো Gemini, Groq, OpenAI বা Custom API Key বসাতে পারবেন।"
+                    "জি বস, আমি আপনার কথা শুনেছি: \"$userPrompt\"। আমি সবসময় আপনার সেবায় প্রস্তুত আছি। আপনি আমাকে ফ্ল্যাশলাইট, ক্যামেরা, ব্যাটারি, সময় বা যেকোনো প্রশ্ন জিজ্ঞেস করতে পারেন!"
                 } else {
-                    "At your service, $bossTitle. Battery is at ${telemetry.batteryPercent}%. You can configure any Gemini, Groq, OpenAI, or Custom API key in Settings."
+                    "I heard you loud and clear, $bossTitle: \"$userPrompt\". I am ready to help with device controls, answers, or any command you need."
                 }
                 JarvisBrainDecision(
                     spokenReply = reply,
@@ -686,7 +752,7 @@ class JarvisBrainService {
                     actionName = "none",
                     actionTarget = "",
                     actionSecondary = "",
-                    followUpSuggestions = listOf("Status report", "ফ্ল্যাশলাইট চালু করো", "ব্যাটারি কত শতাংশ?")
+                    followUpSuggestions = listOf("কেমন আছো জারভিস?", "ফ্ল্যাশলাইট চালু করো", "ব্যাটারি কত শতাংশ?")
                 )
             }
         }
