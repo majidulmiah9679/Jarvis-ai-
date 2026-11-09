@@ -418,7 +418,7 @@ private fun StudioHomeDashboard(
             }
         }
 
-        // 3. Simple Android System Voice Card
+        // 3. Simple Android System STT + TTS Voice Card
         item {
             val isMicActive = hudState == VoiceHudState.LISTENING || hudState == VoiceHudState.SPEAKING
             Surface(
@@ -435,17 +435,106 @@ private fun StudioHomeDashboard(
                         .padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    // STT & TTS Dual Status Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val sttActive = hudState == VoiceHudState.LISTENING
+                        val ttsActive = hudState == VoiceHudState.SPEAKING
+
+                        Surface(
+                            color = if (sttActive) JarvisEmerald.copy(alpha = 0.18f) else visualTheme.topBg,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                if (sttActive) JarvisEmerald else visualTheme.cardBorder
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable {
+                                    if (sttActive) onStopVoice() else onStartVoiceImmediately()
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Mic,
+                                    contentDescription = "STT",
+                                    tint = if (sttActive) JarvisEmerald else visualTheme.primaryAccent,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (sttActive) "STT: কথা শুনছে…" else "STT: কথা শোনা প্রস্তুত",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (sttActive) JarvisEmerald else JarvisIceWhite,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Surface(
+                            color = if (ttsActive) visualTheme.primaryAccent.copy(alpha = 0.18f) else visualTheme.topBg,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                if (ttsActive) visualTheme.primaryAccent else visualTheme.cardBorder
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable {
+                                    if (ttsActive) {
+                                        onStopVoice()
+                                    } else {
+                                        val sample = latestJarvisReply?.text
+                                            ?: "জি বস, আমার এসটিটি এবং টিটিএস ভয়েস সিস্টেম একদম প্রস্তুত আছে।"
+                                        onSpeakMessage(sample, "bn")
+                                    }
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                    contentDescription = "TTS",
+                                    tint = visualTheme.primaryAccent,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (ttsActive) "TTS: কথা বলছে…" else "TTS: কথা বলা প্রস্তুত",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (ttsActive) visualTheme.primaryAccent else JarvisIceWhite,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     // Simple Status Text
                     Text(
                         text = when (hudState) {
                             VoiceHudState.LISTENING -> if (voiceFeatureMode == VoiceFeatureMode.LISTEN_ONLY) {
-                                "🎙️ আপনার কথা শুনছি (Listen Only)…"
+                                "🎙️ STT চালু: আপনার কথা শুনছি…"
                             } else {
-                                "🔊 কথা শুনছি ও উত্তর বলব…"
+                                "🎙️ STT চালু: কথা শুনছি ও TTS দিয়ে উত্তর বলব…"
                             }
-                            VoiceHudState.PROCESSING -> "✨ উত্তর তৈরি হচ্ছে + 🎙️ মাইক চালু"
-                            VoiceHudState.SPEAKING -> "🔊 JARVIS বলছে + 🎙️ মাইক চালু (মাঝে বললেও শুনবে)"
-                            VoiceHudState.IDLE -> "মাইক্রোফোন প্রস্তুত (ট্যাপ করে কথা বলুন)"
+                            VoiceHudState.PROCESSING -> "✨ উত্তর তৈরি হচ্ছে…"
+                            VoiceHudState.SPEAKING -> "🔊 TTS চালু: JARVIS কথা বলছে (শেষ হলেই STT শুনবে)"
+                            VoiceHudState.IDLE -> "STT ও TTS প্রস্তুত (নিচের মাইকে ট্যাপ করে কথা বলুন)"
                         },
                         style = MaterialTheme.typography.titleSmall,
                         color = if (isMicActive) JarvisEmerald else visualTheme.primaryAccent,
@@ -453,7 +542,7 @@ private fun StudioHomeDashboard(
                         textAlign = TextAlign.Center
                     )
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     // Clean Flat Android System Round Mic Button (Fixed 76.dp, never bounces)
                     Box(
@@ -499,9 +588,9 @@ private fun StudioHomeDashboard(
                                 .padding(horizontal = 10.dp)
                         ) {
                             val displayLine = when {
-                                partialTranscript.isNotBlank() -> "শুনছি: “$partialTranscript”"
+                                partialTranscript.isNotBlank() -> "STT শুনছে: “$partialTranscript”"
                                 lastHeardTranscript.isNotBlank() && hudState == VoiceHudState.IDLE ->
-                                    "আপনি বলেছেন: “$lastHeardTranscript”"
+                                    "STT শুনেছে: “$lastHeardTranscript”"
                                 latestJarvisReply != null -> latestJarvisReply.text
                                 else -> "বাংলা বা ইংরেজিতে যেকোনো কথা বলুন"
                             }
@@ -518,9 +607,9 @@ private fun StudioHomeDashboard(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // TWO SIMPLE ANDROID SYSTEM BUTTONS:
-                    // 1. "আমার কথা শুনবে" (Listen Only)
-                    // 2. "কথা শুনে কথা বলবে" (Listen & Talk Back)
+                    // TWO DEDICATED STT & TTS MODE BUTTONS:
+                    // 1. "STT (কথা শুনবে)" (Listen Only)
+                    // 2. "STT + TTS (শুনে বলবে)" (Listen & Talk Back)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -554,7 +643,7 @@ private fun StudioHomeDashboard(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "আমার কথা শুনবে",
+                                text = "STT (কথা শুনবে)",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = JarvisIceWhite,
                                 fontWeight = FontWeight.Bold,
@@ -581,7 +670,7 @@ private fun StudioHomeDashboard(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "কথা শুনে বলবে",
+                                text = "STT + TTS (বলবে)",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,

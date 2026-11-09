@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,24 +15,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -49,21 +50,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import com.example.data.ELEVENLABS_VOICE_PRESETS
 import com.example.data.JarvisSettings
 import com.example.data.REAL_VOICE_PERSONAS
 import com.example.data.VoiceGender
-import com.example.ui.theme.JarvisAmber
 import com.example.ui.theme.JarvisCrimson
 import com.example.ui.theme.JarvisCyan
-import com.example.ui.theme.JarvisElectricBlue
 import com.example.ui.theme.JarvisEmerald
 import com.example.ui.theme.JarvisIceWhite
-import com.example.ui.theme.JarvisMutedCyan
 import com.example.ui.theme.JarvisObsidian
-import com.example.ui.theme.JarvisSurfaceCard
+import com.example.ui.theme.StudioDarkCard
+import com.example.ui.theme.StudioDarkCardBorder
+import com.example.ui.theme.StudioGlassBorder
+import com.example.ui.theme.StudioGlassFill
+import com.example.ui.theme.StudioGoldLight
+import com.example.ui.theme.StudioSubtleText
 import com.example.voice.TtsLocaleDiagnostics
 import com.example.voice.VoiceHudState
 
@@ -76,6 +77,10 @@ fun VoiceLabScreen(
     ttsDiagnostics: TtsLocaleDiagnostics,
     hasConfiguredElevenLabsKey: Boolean,
     isForegroundServiceRunning: Boolean,
+    partialTranscript: String = "",
+    lastHeardTranscript: String = "",
+    onStartSttListening: () -> Unit = {},
+    onStopSttListening: () -> Unit = {},
     onUpdateTtsEngine: (String) -> Unit,
     onSelectVoicePersona: (String) -> Unit = {},
     onUpdateContinuousBackgroundMic: (Boolean) -> Unit = {},
@@ -94,12 +99,6 @@ fun VoiceLabScreen(
     onStopSpeaking: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var customVoiceIdInput by rememberSaveable(settings.elevenLabsVoiceId) {
-        mutableStateOf(settings.elevenLabsVoiceId)
-    }
-    var customApiKeyInput by rememberSaveable(settings.customElevenLabsKey) {
-        mutableStateOf(settings.customElevenLabsKey)
-    }
     var localSpeechRate by rememberSaveable(settings.speechRate) {
         mutableFloatStateOf(settings.speechRate)
     }
@@ -107,38 +106,40 @@ fun VoiceLabScreen(
         mutableFloatStateOf(settings.speechPitch)
     }
     var testSpeechInput by rememberSaveable {
-        mutableStateOf("Good evening, Boss. All JARVIS neural and voice systems are online and ready for your command.")
+        mutableStateOf("জি বস, আমি আপনার কথা পরিষ্কার শুনতে পাচ্ছি এবং বাংলা ও ইংরেজিতে উত্তর দিতে প্রস্তুত।")
     }
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 14.dp),
-        contentPadding = PaddingValues(vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
             Text(
-                text = "NATURAL AI VOICE & TTS STUDIO",
-                style = MaterialTheme.typography.headlineMedium,
-                color = JarvisCyan
+                text = "STT (কথা শোনা) ও TTS (কথা বলা)",
+                style = MaterialTheme.typography.headlineSmall,
+                color = JarvisIceWhite,
+                fontWeight = FontWeight.Bold
             )
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "Configure Android Phone TTS, ElevenLabs Neural Voice ID & API, Bilingual Bangla/English speech, and test JARVIS voice output live.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = JarvisMutedCyan
+                text = "Android Native Speech-to-Text (STT) এবং Text-to-Speech (TTS) কন্ট্রোল ও লাইভ টেস্ট",
+                style = MaterialTheme.typography.bodySmall,
+                color = StudioSubtleText
             )
         }
 
-        // 1. Live Voice Synthesis Status & Testing Console
+        // 1. STT (Speech-to-Text — কথা শোনা) Configuration & Live Test Card
         item {
             Surface(
-                color = JarvisSurfaceCard,
+                color = StudioDarkCard,
                 shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.5.dp, JarvisCyan),
+                border = BorderStroke(1.dp, StudioDarkCardBorder),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(14.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -146,41 +147,204 @@ fun VoiceLabScreen(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = Icons.Filled.GraphicEq,
+                                imageVector = Icons.Filled.Mic,
                                 contentDescription = null,
-                                tint = JarvisCyan
+                                tint = JarvisEmerald,
+                                modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "JARVIS VOICE TESTING CONSOLE",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = JarvisCyan,
+                                text = "১. STT ইঞ্জিন (Speech-to-Text • কথা শোনা)",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = JarvisIceWhite,
                                 fontWeight = FontWeight.Bold
                             )
                         }
                         Text(
-                            text = activeVoiceEngineLabel,
+                            text = if (hudState == VoiceHudState.LISTENING) "শুনছে…" else "প্রস্তুত",
                             style = MaterialTheme.typography.labelSmall,
-                            color = JarvisEmerald
+                            color = JarvisEmerald,
+                            fontWeight = FontWeight.Bold
                         )
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Status: $voiceStatusMessage",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = JarvisMutedCyan
+                        text = voiceStatusMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = StudioSubtleText
                     )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Live STT Transcript Box
+                    Surface(
+                        color = StudioGlassFill,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, StudioGlassBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        val sttText = when {
+                            partialTranscript.isNotBlank() -> "শুনছি: “$partialTranscript”"
+                            lastHeardTranscript.isNotBlank() -> "শেষ শোনা কথা: “$lastHeardTranscript”"
+                            else -> "নিচের 'STT টেস্ট (কথা বলুন)' বাটনে ট্যাপ করে কথা বলুন"
+                        }
+                        Text(
+                            text = sttText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = JarvisIceWhite,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val isSttActive = hudState == VoiceHudState.LISTENING
+                        Button(
+                            onClick = {
+                                if (isSttActive) onStopSttListening() else onStartSttListening()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSttActive) JarvisCrimson else JarvisEmerald,
+                                contentColor = if (isSttActive) JarvisIceWhite else JarvisObsidian
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("stt_live_test_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isSttActive) Icons.Filled.Stop else Icons.Filled.Mic,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (isSttActive) "STT শোনা বন্ধ করুন" else "🎙️ STT টেস্ট (এখন কথা বলুন)",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "STT ভাষা (কোন ভাষায় কথা শুনবে):",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = JarvisIceWhite,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(
+                            "AUTO" to "বাংলা + English",
+                            "BN" to "বাংলা (bn-BD)",
+                            "EN" to "English (en-US)"
+                        ).forEach { (code, label) ->
+                            val selected = settings.languageMode == code
+                            Surface(
+                                color = if (selected) StudioGoldLight else StudioGlassFill,
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, if (selected) StudioGoldLight else StudioGlassBorder),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { onUpdateLanguageMode(code) }
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (selected) JarvisObsidian else JarvisIceWhite,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = StudioDarkCardBorder)
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "অটো-কন্টিনিউয়াস STT (নন-স্টপ শোনা)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = JarvisIceWhite,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "TTS কথা বলা শেষ হলেই অটোমেটিক আবার STT কথা শোনা শুরু করবে।",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = JarvisEmerald
+                            )
+                        }
+                        Switch(
+                            checked = settings.continuousBackgroundMic,
+                            onCheckedChange = onUpdateContinuousBackgroundMic,
+                            colors = SwitchDefaults.colors(checkedThumbColor = JarvisEmerald)
+                        )
+                    }
+                }
+            }
+        }
+
+        // 2. TTS (Text-to-Speech — কথা বলা) Live Test & Voice Selection Card
+        item {
+            Surface(
+                color = StudioDarkCard,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, StudioDarkCardBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = null,
+                                tint = StudioGoldLight,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "২. TTS ইঞ্জিন (Text-to-Speech • কথা বলা)",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = JarvisIceWhite,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Text(
+                            text = if (ttsDiagnostics.isEngineInitialized) "সক্রিয়" else "প্রস্তুত হচ্ছে",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = JarvisEmerald,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
                     OutlinedTextField(
                         value = testSpeechInput,
                         onValueChange = { testSpeechInput = it },
-                        label = { Text("Custom Speech Synthesis Test (English / বাংলা)") },
+                        label = { Text("TTS টেস্ট টেক্সট (বাংলা / English)") },
+                        shape = RoundedCornerShape(10.dp),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = JarvisCyan,
-                            unfocusedBorderColor = JarvisCyan.copy(alpha = 0.4f)
+                            focusedBorderColor = StudioGoldLight,
+                            unfocusedBorderColor = StudioGlassBorder
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -194,9 +358,10 @@ fun VoiceLabScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
-                            onClick = { onTestSpeak(testSpeechInput, "en") },
+                            onClick = { onTestSpeak(testSpeechInput, "bn") },
+                            shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = JarvisCyan,
+                                containerColor = StudioGoldLight,
                                 contentColor = JarvisObsidian
                             ),
                             modifier = Modifier
@@ -205,18 +370,19 @@ fun VoiceLabScreen(
                         ) {
                             Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("SPEAK TEXT", fontWeight = FontWeight.Bold)
+                            Text("TTS বাজান", fontWeight = FontWeight.Bold)
                         }
 
                         if (hudState == VoiceHudState.SPEAKING) {
                             OutlinedButton(
                                 onClick = onStopSpeaking,
+                                shape = RoundedCornerShape(10.dp),
                                 border = BorderStroke(1.dp, JarvisCrimson),
                                 modifier = Modifier.testTag("voice_lab_stop_button")
                             ) {
                                 Icon(Icons.Filled.Stop, contentDescription = null, tint = JarvisCrimson)
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("STOP", color = JarvisCrimson)
+                                Text("থামান", color = JarvisCrimson)
                             }
                         }
                     }
@@ -230,746 +396,167 @@ fun VoiceLabScreen(
                         OutlinedButton(
                             onClick = {
                                 onTestSpeak(
-                                    "Welcome back, Boss. Arc Reactor telemetry is nominal and all Android systems are at your command.",
-                                    "en"
-                                )
-                            },
-                            border = BorderStroke(1.dp, JarvisCyan.copy(alpha = 0.6f)),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("test_english_voice_button")
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.VolumeUp,
-                                contentDescription = null,
-                                tint = JarvisCyan,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Test English Voice", color = JarvisIceWhite, style = MaterialTheme.typography.labelSmall)
-                        }
-
-                        OutlinedButton(
-                            onClick = {
-                                onTestSpeak(
-                                    "হ্যালো বস, আমি জারভিস। আপনার ফোনের সব সিস্টেম এখন সম্পূর্ণ সচল এবং প্রস্তুত।",
+                                    "জি বস, আমার বাংলা টিটিএস ভয়েস একদম পরিষ্কারভাবে কাজ করছে।",
                                     "bn"
                                 )
                             },
-                            border = BorderStroke(1.dp, JarvisEmerald.copy(alpha = 0.6f)),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, StudioGlassBorder),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("test_bangla_voice_button")
                         ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.VolumeUp,
-                                contentDescription = null,
-                                tint = JarvisEmerald,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("বাংলা ভয়েস টেস্ট", color = JarvisIceWhite, style = MaterialTheme.typography.labelSmall)
+                            Text("বাংলা TTS টেস্ট", color = JarvisIceWhite, style = MaterialTheme.typography.labelMedium)
                         }
-                    }
-                }
-            }
-        }
 
-        // 1B. 6 REAL HUMAN VOICES (3 MALE 👨 & 3 FEMALE 👩) STUDIO SELECTOR
-        item {
-            Surface(
-                color = JarvisSurfaceCard,
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.5.dp, JarvisEmerald.copy(alpha = 0.7f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("real_voice_personas_card")
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.RecordVoiceOver, contentDescription = null, tint = JarvisEmerald)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "রিয়েল মানুষের ভয়েস (৩টি পুরুষ 👨 ও ৩টি নারী 👩)",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = JarvisEmerald,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "যেকোনো ভয়েসের ওপর ট্যাপ করলেই সাথে সাথে সেই রিয়েল ভয়েস সেট হবে এবং কথা বলে শোনাবে:",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = JarvisMutedCyan
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    REAL_VOICE_PERSONAS.forEach { persona ->
-                        val isSelected = settings.selectedVoicePersonaId == persona.id
-                        val isFemale = persona.gender == VoiceGender.FEMALE
-                        val accentColor = if (isFemale) JarvisAmber else JarvisCyan
-                        val genderBadge = if (isFemale) "👩 FEMALE" else "👨 MALE"
-
-                        Surface(
-                            color = if (isSelected) accentColor.copy(alpha = 0.18f) else JarvisObsidian,
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(
-                                width = if (isSelected) 1.5.dp else 1.dp,
-                                color = if (isSelected) accentColor else accentColor.copy(alpha = 0.3f)
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { onSelectVoicePersona(persona.id) }
-                                .testTag("voice_lab_persona_${persona.id}")
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        RadioButton(
-                                            selected = isSelected,
-                                            onClick = { onSelectVoicePersona(persona.id) },
-                                            colors = RadioButtonDefaults.colors(selectedColor = accentColor)
-                                        )
-                                        Column {
-                                            Text(
-                                                text = "${persona.nameBn} • ${persona.nameEn}",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = JarvisIceWhite,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Text(
-                                                text = "${persona.subtitleBn} • Pitch ${persona.pitch}x • Speed ${persona.rate}x",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = JarvisMutedCyan
-                                            )
-                                        }
-                                    }
-
-                                    Surface(
-                                        color = accentColor.copy(alpha = 0.2f),
-                                        shape = RoundedCornerShape(50)
-                                    ) {
-                                        Text(
-                                            text = genderBadge,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = accentColor,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(6.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            onSelectVoicePersona(persona.id)
-                                            onTestSpeak(persona.sampleGreetingBn, "bn")
-                                        },
-                                        border = BorderStroke(1.dp, JarvisEmerald.copy(alpha = 0.6f)),
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(
-                                            Icons.AutoMirrored.Filled.VolumeUp,
-                                            contentDescription = null,
-                                            tint = JarvisEmerald,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("বাংলায় শুনুন", color = JarvisIceWhite, style = MaterialTheme.typography.labelSmall)
-                                    }
-
-                                    OutlinedButton(
-                                        onClick = {
-                                            onSelectVoicePersona(persona.id)
-                                            onTestSpeak(persona.sampleGreetingEn, "en")
-                                        },
-                                        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(
-                                            Icons.AutoMirrored.Filled.VolumeUp,
-                                            contentDescription = null,
-                                            tint = accentColor,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Hear English", color = JarvisIceWhite, style = MaterialTheme.typography.labelSmall)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Voice Engine Selector (Phone Native TTS vs Gemini Native TTS vs ElevenLabs Neural Voice)
-        item {
-            Surface(
-                color = JarvisSurfaceCard,
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, JarvisCyan.copy(alpha = 0.4f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.RecordVoiceOver, contentDescription = null, tint = JarvisCyan)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "SELECT VOICE SYNTHESIS ENGINE",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = JarvisCyan
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    EngineOptionRow(
-                        selected = settings.ttsEngine == "PHONE_TTS",
-                        title = "Android Multi-Voice Neural TTS (Zero Latency & Offline Ready)",
-                        subtitle = "Uses built-in Android Male & Female voices with natural human pitch/speed & automatic বাংলা/EN switching.",
-                        onClick = { onUpdateTtsEngine("PHONE_TTS") }
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    EngineOptionRow(
-                        selected = settings.ttsEngine == "GEMINI_TTS",
-                        title = "Gemini 2.5 Native AI Voice (Charon / Aoede / Fenrir / Kore / Puck / Leda)",
-                        subtitle = "Cloud AI human-like voice generation using your Gemini API key with instant Phone TTS fallback.",
-                        onClick = { onUpdateTtsEngine("GEMINI_TTS") }
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    EngineOptionRow(
-                        selected = settings.ttsEngine == "ELEVENLABS",
-                        title = "ElevenLabs Neural AI Voice (eleven_multilingual_v2)",
-                        subtitle = "Ultra-realistic human-like Male & Female voices in English & Bangla with automatic Phone TTS fallback.",
-                        onClick = { onUpdateTtsEngine("ELEVENLABS") }
-                    )
-                }
-            }
-        }
-
-        // 2b. Android TextToSpeech (TTS) Fallback & Bilingual Locale Diagnostics Card
-        item {
-            Surface(
-                color = JarvisSurfaceCard,
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, JarvisEmerald.copy(alpha = 0.55f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("android_tts_fallback_card")
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Filled.CheckCircle,
-                                contentDescription = null,
-                                tint = if (ttsDiagnostics.isEngineInitialized) JarvisEmerald else JarvisAmber
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "ANDROID TTS FALLBACK ENGINE (EN & বাংলা)",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = JarvisEmerald,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
                         OutlinedButton(
-                            onClick = onRefreshTtsLocales,
-                            border = BorderStroke(1.dp, JarvisCyan.copy(alpha = 0.6f)),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Text("RE-PROBE", color = JarvisCyan, style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "• Engine: ${ttsDiagnostics.enginePackageName}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = JarvisIceWhite
-                    )
-                    Text(
-                        text = "• English Locale (${ttsDiagnostics.resolvedEnglishLocale}): ${if (ttsDiagnostics.isEnglishSupported) "SUPPORTED" else "DEFAULT"} • Voice: ${ttsDiagnostics.activeEnglishVoiceName}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (ttsDiagnostics.isEnglishSupported) JarvisEmerald else JarvisAmber
-                    )
-                    Text(
-                        text = "• Bangla Locale (${ttsDiagnostics.resolvedBanglaLocale}): ${if (ttsDiagnostics.isBanglaSupported) "SUPPORTED" else "VOICE PACK OPTIONAL"} • Voice: ${ttsDiagnostics.activeBanglaVoiceName}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (ttsDiagnostics.isBanglaSupported) JarvisEmerald else JarvisAmber
-                    )
-                    Text(
-                        text = "• Fallback Status: ${ttsDiagnostics.lastFallbackReason}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = JarvisMutedCyan
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
                             onClick = {
-                                onTestAndroidTtsFallback(
-                                    "Boss, Android native Text To Speech fallback is active and verified for English.",
+                                onTestSpeak(
+                                    "Hello Boss, Android native Text to Speech is online and speaking clearly.",
                                     "en"
                                 )
                             },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = JarvisCyan,
-                                contentColor = JarvisObsidian
-                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, StudioGlassBorder),
                             modifier = Modifier
                                 .weight(1f)
-                                .testTag("force_fallback_en_button")
+                                .testTag("test_english_voice_button")
                         ) {
-                            Text("Fallback EN Test", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                            Text("English TTS টেস্ট", color = JarvisIceWhite, style = MaterialTheme.typography.labelMedium)
                         }
+                    }
 
-                        Button(
-                            onClick = {
-                                onTestAndroidTtsFallback(
-                                    "বস, অ্যান্ড্রয়েড টেক্সট টু স্পিচ বাংলা ভয়েস ফলব্যাক সচল রয়েছে।",
-                                    "bn"
-                                )
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = JarvisEmerald,
-                                contentColor = JarvisObsidian
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("force_fallback_bn_button")
-                        ) {
-                            Text("Fallback বাংলা Test", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
-                        }
+                    Spacer(modifier = Modifier.height(14.dp))
+                    HorizontalDivider(color = StudioDarkCardBorder)
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // 6 Real Male & Female Voices for TTS
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Filled.RecordVoiceOver,
+                            contentDescription = null,
+                            tint = StudioGoldLight,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "TTS কণ্ঠস্বর (৩টি পুরুষ 👨 ও ৩টি নারী 👩):",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = JarvisIceWhite,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = onInstallTtsData,
-                            border = BorderStroke(1.dp, JarvisCyan.copy(alpha = 0.6f)),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("install_tts_data_button")
-                        ) {
-                            Text("Install Voice Data", color = JarvisCyan, style = MaterialTheme.typography.labelSmall)
-                        }
-
-                        OutlinedButton(
-                            onClick = onOpenTtsSettings,
-                            border = BorderStroke(1.dp, JarvisElectricBlue),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("open_tts_settings_button")
-                        ) {
-                            Text("Android TTS Settings", color = JarvisIceWhite, style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. ElevenLabs Voice ID & API Configuration Card
-        item {
-            Surface(
-                color = JarvisSurfaceCard,
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, JarvisElectricBlue.copy(alpha = 0.5f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Key, contentDescription = null, tint = JarvisElectricBlue)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "ELEVENLABS VOICE ID & API CONFIG",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = JarvisCyan
-                            )
-                        }
-                        Surface(
-                            color = if (hasConfiguredElevenLabsKey) {
-                                JarvisEmerald.copy(alpha = 0.2f)
-                            } else {
-                                JarvisAmber.copy(alpha = 0.2f)
-                            },
-                            shape = RoundedCornerShape(50)
-                        ) {
-                            Text(
-                                text = if (hasConfiguredElevenLabsKey) "KEY CONFIGURED" else "KEY OPTIONAL",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (hasConfiguredElevenLabsKey) JarvisEmerald else JarvisAmber,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Select a preset ElevenLabs Voice ID or enter your custom cloned Voice ID:",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = JarvisMutedCyan
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    ELEVENLABS_VOICE_PRESETS.forEach { preset ->
-                        val isSelected = settings.elevenLabsVoiceId == preset.id
-                        Surface(
-                            color = if (isSelected) JarvisElectricBlue.copy(alpha = 0.22f) else JarvisObsidian,
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(
-                                1.dp,
-                                if (isSelected) JarvisCyan else JarvisCyan.copy(alpha = 0.25f)
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 3.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable {
-                                    customVoiceIdInput = preset.id
-                                    onUpdateElevenLabsVoiceId(preset.id)
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                        REAL_VOICE_PERSONAS.forEach { persona ->
+                            val selected = settings.selectedVoicePersonaId == persona.id
+                            val emoji = if (persona.gender == VoiceGender.FEMALE) "👩" else "👨"
+                            Surface(
+                                color = if (selected) StudioGoldLight else StudioGlassFill,
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selected) StudioGoldLight else StudioGlassBorder
+                                ),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { onSelectVoicePersona(persona.id) }
+                                    .testTag("voicelab_persona_${persona.id}")
                             ) {
-                                RadioButton(
-                                    selected = isSelected,
-                                    onClick = {
-                                        customVoiceIdInput = preset.id
-                                        onUpdateElevenLabsVoiceId(preset.id)
-                                    },
-                                    colors = RadioButtonDefaults.colors(selectedColor = JarvisCyan)
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                ) {
                                     Text(
-                                        text = "${preset.name} (${preset.id.take(8)}…)",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = JarvisIceWhite,
+                                        text = "$emoji ${persona.nameBn}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = if (selected) JarvisObsidian else JarvisIceWhite,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
-                                        text = "${preset.accent} • ${preset.description}",
+                                        text = persona.subtitleBn,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = JarvisMutedCyan
+                                        color = if (selected) JarvisObsidian else StudioSubtleText
                                     )
                                 }
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = customVoiceIdInput,
-                            onValueChange = { customVoiceIdInput = it },
-                            label = { Text("ElevenLabs Voice ID") },
-                            singleLine = true,
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("elevenlabs_voice_id_input")
-                        )
-                        Button(
-                            onClick = { onUpdateElevenLabsVoiceId(customVoiceIdInput) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = JarvisCyan,
-                                contentColor = JarvisObsidian
-                            )
-                        ) {
-                            Text("SAVE ID", fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = customApiKeyInput,
-                            onValueChange = { customApiKeyInput = it },
-                            label = { Text("Optional Runtime ElevenLabs API Key (or set in AI Studio Secrets)") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("elevenlabs_api_key_input")
-                        )
-                        Button(
-                            onClick = { onUpdateCustomElevenLabsKey(customApiKeyInput) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = JarvisElectricBlue,
-                                contentColor = JarvisIceWhite
-                            )
-                        ) {
-                            Text("APPLY", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-        }
-
-        // 4. Phone TTS Tuning, Bilingual Language Mode & Hands-Free Foreground Service
-        item {
-            Surface(
-                color = JarvisSurfaceCard,
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, JarvisCyan.copy(alpha = 0.35f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
+                    // Speech Speed & Pitch Sliders
                     Text(
-                        text = "PHONE TTS MODULATION & BILINGUAL SETTINGS",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = JarvisCyan
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Text(
-                        text = "Speech Rate: ${String.format(java.util.Locale.US, "%.2fx", localSpeechRate)}",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "TTS কথা বলার গতি (Speed): ${"%.2f".format(localSpeechRate)}x",
+                        style = MaterialTheme.typography.bodySmall,
                         color = JarvisIceWhite
                     )
                     Slider(
                         value = localSpeechRate,
-                        onValueChange = { localSpeechRate = it },
-                        onValueChangeFinished = { onUpdateSpeechRate(localSpeechRate) },
-                        valueRange = 0.6f..1.6f,
+                        onValueChange = {
+                            localSpeechRate = it
+                            onUpdateSpeechRate(it)
+                        },
+                        valueRange = 0.7f..1.4f,
                         colors = SliderDefaults.colors(
-                            thumbColor = JarvisCyan,
-                            activeTrackColor = JarvisCyan
+                            thumbColor = StudioGoldLight,
+                            activeTrackColor = StudioGoldLight
                         )
                     )
 
                     Text(
-                        text = "Voice Pitch (JARVIS Resonance): ${String.format(java.util.Locale.US, "%.2fx", localSpeechPitch)}",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "TTS কণ্ঠের পিচ (Pitch): ${"%.2f".format(localSpeechPitch)}x",
+                        style = MaterialTheme.typography.bodySmall,
                         color = JarvisIceWhite
                     )
                     Slider(
                         value = localSpeechPitch,
-                        onValueChange = { localSpeechPitch = it },
-                        onValueChangeFinished = { onUpdateSpeechPitch(localSpeechPitch) },
-                        valueRange = 0.6f..1.4f,
+                        onValueChange = {
+                            localSpeechPitch = it
+                            onUpdateSpeechPitch(it)
+                        },
+                        valueRange = 0.7f..1.4f,
                         colors = SliderDefaults.colors(
-                            thumbColor = JarvisElectricBlue,
-                            activeTrackColor = JarvisElectricBlue
+                            thumbColor = JarvisEmerald,
+                            activeTrackColor = JarvisEmerald
                         )
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Text(
-                        text = "Voice Recognition & Response Language:",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = JarvisIceWhite,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(
-                            "AUTO" to "Auto (EN + বাংলা)",
-                            "EN" to "English Only",
-                            "BN" to "বাংলা (Bangla)"
-                        ).forEach { (code, label) ->
-                            val selected = settings.languageMode == code
-                            Surface(
-                                color = if (selected) JarvisCyan else JarvisObsidian,
-                                shape = RoundedCornerShape(50),
-                                border = BorderStroke(1.dp, JarvisCyan),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .clickable { onUpdateLanguageMode(code) }
-                            ) {
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (selected) JarvisObsidian else JarvisIceWhite,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "নন-স্টপ ব্যাকগ্রাউন্ড মাইক (Continuous Mic Lock)",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = JarvisIceWhite,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "একবার মাইক চালু করলে কথা শুনবে, জবাব দেবে এবং মাঝখানে মাইক কখনো বন্ধ হবে না।",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = JarvisEmerald
-                            )
+                        OutlinedButton(
+                            onClick = onOpenTtsSettings,
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, StudioGlassBorder),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(16.dp), tint = JarvisCyan)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("ফোন TTS সেটিংস", color = JarvisIceWhite, style = MaterialTheme.typography.labelSmall)
                         }
-                        Switch(
-                            checked = settings.continuousBackgroundMic,
-                            onCheckedChange = onUpdateContinuousBackgroundMic,
-                            colors = SwitchDefaults.colors(checkedThumbColor = JarvisEmerald),
-                            modifier = Modifier.testTag("continuous_background_mic_switch")
-                        )
-                    }
 
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Auto-Speak Every JARVIS Reply",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = JarvisIceWhite,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Automatically convert Gemini responses to natural speech.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = JarvisMutedCyan
-                            )
+                        OutlinedButton(
+                            onClick = onRefreshTtsLocales,
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, StudioGlassBorder),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp), tint = JarvisEmerald)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("ভয়েস রিফ্রেশ", color = JarvisIceWhite, style = MaterialTheme.typography.labelSmall)
                         }
-                        Switch(
-                            checked = settings.autoSpeakReplies,
-                            onCheckedChange = onUpdateAutoSpeak,
-                            colors = SwitchDefaults.colors(checkedThumbColor = JarvisCyan)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Hands-Free Continuous Mode (Foreground Service)",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = JarvisIceWhite,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = if (isForegroundServiceRunning) {
-                                    "ACTIVE: Silent background service running • Listening after replies."
-                                } else {
-                                    "Keeps microphone alive smoothly in the background without notification noise."
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isForegroundServiceRunning) JarvisEmerald else JarvisMutedCyan
-                            )
-                        }
-                        Switch(
-                            checked = settings.handsFreeMode,
-                            onCheckedChange = onToggleHandsFreeService,
-                            colors = SwitchDefaults.colors(checkedThumbColor = JarvisEmerald),
-                            modifier = Modifier.testTag("hands_free_service_switch")
-                        )
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EngineOptionRow(
-    selected: Boolean,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit
-) {
-    Surface(
-        color = if (selected) JarvisElectricBlue.copy(alpha = 0.22f) else JarvisObsidian,
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, if (selected) JarvisCyan else JarvisCyan.copy(alpha = 0.3f)),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable { onClick() }
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Filled.CheckCircle,
-                contentDescription = null,
-                tint = if (selected) JarvisCyan else JarvisMutedCyan.copy(alpha = 0.4f),
-                modifier = Modifier.size(22.dp)
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = JarvisIceWhite,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = JarvisMutedCyan
-                )
             }
         }
     }

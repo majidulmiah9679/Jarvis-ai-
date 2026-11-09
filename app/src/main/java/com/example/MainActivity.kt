@@ -264,6 +264,7 @@ fun JarvisAppRoot(
                         visualTheme = activeVisualTheme,
                         isHomeActive = currentTab == JarvisTab.HUD && !isVoiceChatMode,
                         isVoiceStudioActive = currentTab == JarvisTab.HUD && isVoiceChatMode,
+                        isSttTtsLabActive = currentTab == JarvisTab.VOICE,
                         isControlActive = currentTab == JarvisTab.CONTROL,
                         isSettingsActive = currentTab == JarvisTab.SYSTEM,
                         onSelectHome = {
@@ -273,6 +274,10 @@ fun JarvisAppRoot(
                         onSelectVoiceStudio = {
                             currentTab = JarvisTab.HUD
                             isVoiceChatMode = true
+                        },
+                        onSelectSttTtsLab = {
+                            currentTab = JarvisTab.VOICE
+                            isVoiceChatMode = false
                         },
                         onSelectControl = {
                             currentTab = JarvisTab.CONTROL
@@ -420,6 +425,10 @@ fun JarvisAppRoot(
                                 ttsDiagnostics = ttsDiagnostics,
                                 hasConfiguredElevenLabsKey = hasConfiguredElevenLabsKey,
                                 isForegroundServiceRunning = isForegroundServiceRunning,
+                                partialTranscript = partialTranscript,
+                                lastHeardTranscript = lastHeardTranscript,
+                                onStartSttListening = handleStartListenAndSpeakFeature,
+                                onStopSttListening = { jarvisViewModel.stopVoiceListening() },
                                 onUpdateTtsEngine = { jarvisViewModel.updateTtsEngine(it) },
                                 onSelectVoicePersona = { personaId ->
                                     jarvisViewModel.selectVoicePersona(personaId, testSpeakImmediately = true)
@@ -541,10 +550,12 @@ private fun AndroidSystemBottomNavigationBar(
     visualTheme: JarvisVisualTheme,
     isHomeActive: Boolean,
     isVoiceStudioActive: Boolean,
+    isSttTtsLabActive: Boolean,
     isControlActive: Boolean,
     isSettingsActive: Boolean,
     onSelectHome: () -> Unit,
     onSelectVoiceStudio: () -> Unit,
+    onSelectSttTtsLab: () -> Unit,
     onSelectControl: () -> Unit,
     onSelectSettings: () -> Unit
 ) {
@@ -589,6 +600,25 @@ private fun AndroidSystemBottomNavigationBar(
                 unselectedTextColor = JarvisMutedCyan
             ),
             modifier = Modifier.testTag("nav_tab_voice")
+        )
+        NavigationBarItem(
+            selected = isSttTtsLabActive,
+            onClick = onSelectSttTtsLab,
+            icon = {
+                Icon(
+                    imageVector = Icons.Filled.RadioButtonChecked,
+                    contentDescription = "STT ও TTS"
+                )
+            },
+            label = { Text("STT/TTS") },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = JarvisObsidian,
+                selectedTextColor = visualTheme.primaryAccent,
+                indicatorColor = visualTheme.primaryAccent,
+                unselectedIconColor = JarvisMutedCyan,
+                unselectedTextColor = JarvisMutedCyan
+            ),
+            modifier = Modifier.testTag("nav_tab_stt_tts")
         )
         NavigationBarItem(
             selected = isControlActive,
