@@ -74,4 +74,32 @@ class ExampleUnitTest {
         val noWake = WakeWordDetector.analyzeTranscript("What is the weather today")
         assertTrue(noWake is WakeWordMatchResult.NoWakeWord)
     }
+
+    @Test
+    fun detectGoogleGeminiAndVertexAqApiKeysAccurately() {
+        val sampleVertexKey = "AQ." + "Ab8RN6K8U_9WskNO9HdbqbAkcSzUFqSz_i_qQgb2-UXoj1uFRA"
+        assertTrue(com.example.ai.JarvisBrainService.isGoogleGeminiOrVertexKey(sampleVertexKey))
+        assertEquals(
+            "GOOGLE GEMINI / VERTEX KEY (AQ.)",
+            com.example.ai.JarvisBrainService.detectKeyType(sampleVertexKey)
+        )
+
+        val sampleGeminiKey = "AIzaSySampleKey1234567890"
+        assertTrue(com.example.ai.JarvisBrainService.isGoogleGeminiOrVertexKey(sampleGeminiKey))
+        assertEquals(
+            "GOOGLE GEMINI API KEY (AIza)",
+            com.example.ai.JarvisBrainService.detectKeyType(sampleGeminiKey)
+        )
+
+        val sampleOpenAiKey = "sk-proj-123456"
+        assertFalse(com.example.ai.JarvisBrainService.isGoogleGeminiOrVertexKey(sampleOpenAiKey))
+    }
+
+    @Test
+    fun verifySixRealMaleAndFemaleVoicePersonasAreConfigured() {
+        assertEquals(6, com.example.data.REAL_VOICE_PERSONAS.size)
+        assertEquals(3, com.example.data.REAL_VOICE_PERSONAS.count { it.gender == com.example.data.VoiceGender.FEMALE })
+        assertEquals(3, com.example.data.REAL_VOICE_PERSONAS.count { it.gender == com.example.data.VoiceGender.MALE })
+    }
 }
+

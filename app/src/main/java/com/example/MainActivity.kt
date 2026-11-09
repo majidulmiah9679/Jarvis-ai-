@@ -33,6 +33,9 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
@@ -248,21 +251,40 @@ fun JarvisAppRoot(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colorStops = arrayOf(
-                        0.0f to activeVisualTheme.topBg,
-                        0.45f to activeVisualTheme.midBg,
-                        1.0f to activeVisualTheme.bottomBg
-                    )
-                )
-            )
+            .background(activeVisualTheme.topBg)
     ) {
         val isWideScreen = maxWidth >= 600.dp
 
         Scaffold(
             contentWindowInsets = WindowInsets.safeDrawing,
-            containerColor = Color.Transparent
+            containerColor = activeVisualTheme.topBg,
+            bottomBar = {
+                if (!isWideScreen) {
+                    AndroidSystemBottomNavigationBar(
+                        visualTheme = activeVisualTheme,
+                        isHomeActive = currentTab == JarvisTab.HUD && !isVoiceChatMode,
+                        isVoiceStudioActive = currentTab == JarvisTab.HUD && isVoiceChatMode,
+                        isControlActive = currentTab == JarvisTab.CONTROL,
+                        isSettingsActive = currentTab == JarvisTab.SYSTEM,
+                        onSelectHome = {
+                            currentTab = JarvisTab.HUD
+                            isVoiceChatMode = false
+                        },
+                        onSelectVoiceStudio = {
+                            currentTab = JarvisTab.HUD
+                            isVoiceChatMode = true
+                        },
+                        onSelectControl = {
+                            currentTab = JarvisTab.CONTROL
+                            isVoiceChatMode = false
+                        },
+                        onSelectSettings = {
+                            currentTab = JarvisTab.SYSTEM
+                            isVoiceChatMode = false
+                        }
+                    )
+                }
+            }
         ) { innerPadding ->
             Box(
                 modifier = Modifier
@@ -272,7 +294,7 @@ fun JarvisAppRoot(
                 Row(modifier = Modifier.fillMaxSize()) {
                     if (isWideScreen) {
                         NavigationRail(
-                            containerColor = JarvisSurfaceCard.copy(alpha = 0.85f),
+                            containerColor = activeVisualTheme.cardBg,
                             modifier = Modifier.fillMaxHeight()
                         ) {
                             JarvisTab.entries.forEach { tab ->
@@ -294,8 +316,8 @@ fun JarvisAppRoot(
                                     },
                                     colors = NavigationRailItemDefaults.colors(
                                         selectedIconColor = JarvisObsidian,
-                                        selectedTextColor = StudioGoldLight,
-                                        indicatorColor = StudioGoldLight,
+                                        selectedTextColor = activeVisualTheme.primaryAccent,
+                                        indicatorColor = activeVisualTheme.primaryAccent,
                                         unselectedIconColor = JarvisMutedCyan,
                                         unselectedTextColor = JarvisMutedCyan
                                     ),
@@ -509,131 +531,104 @@ fun JarvisAppRoot(
                         }
                     }
                 }
-
-                // Sleek Modern Bottom Navigation Dock
-                if (!isWideScreen) {
-                    FloatingStudioBottomPill(
-                        visualTheme = activeVisualTheme,
-                        isHomeActive = currentTab == JarvisTab.HUD && !isVoiceChatMode,
-                        isVoiceStudioActive = currentTab == JarvisTab.HUD && isVoiceChatMode,
-                        isSettingsActive = currentTab == JarvisTab.SYSTEM,
-                        onSelectHome = {
-                            currentTab = JarvisTab.HUD
-                            isVoiceChatMode = false
-                        },
-                        onSelectVoiceStudio = {
-                            currentTab = JarvisTab.HUD
-                            isVoiceChatMode = true
-                        },
-                        onSelectSettings = {
-                            currentTab = JarvisTab.SYSTEM
-                            isVoiceChatMode = false
-                        },
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 14.dp)
-                    )
-                }
             }
         }
     }
 }
 
 @Composable
-private fun FloatingStudioBottomPill(
+private fun AndroidSystemBottomNavigationBar(
     visualTheme: JarvisVisualTheme,
     isHomeActive: Boolean,
     isVoiceStudioActive: Boolean,
+    isControlActive: Boolean,
     isSettingsActive: Boolean,
     onSelectHome: () -> Unit,
     onSelectVoiceStudio: () -> Unit,
-    onSelectSettings: () -> Unit,
-    modifier: Modifier = Modifier
+    onSelectControl: () -> Unit,
+    onSelectSettings: () -> Unit
 ) {
-    Surface(
-        color = visualTheme.cardBg.copy(alpha = 0.94f),
-        shape = RoundedCornerShape(50),
-        border = BorderStroke(1.dp, visualTheme.cardBorder),
-        tonalElevation = 12.dp,
-        shadowElevation = 12.dp,
-        modifier = modifier
+    NavigationBar(
+        containerColor = visualTheme.cardBg,
+        tonalElevation = 0.dp
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            FloatingPillNavIcon(
-                icon = Icons.Filled.Home,
-                contentDescription = "Home",
-                selected = isHomeActive,
-                accentColor = visualTheme.primaryAccent,
-                secondaryColor = visualTheme.secondaryAccent,
-                onClick = onSelectHome,
-                testTag = "nav_tab_hud"
-            )
-            FloatingPillNavIcon(
-                icon = Icons.Filled.GraphicEq,
-                contentDescription = "Voice Studio",
-                selected = isVoiceStudioActive,
-                accentColor = visualTheme.primaryAccent,
-                secondaryColor = visualTheme.secondaryAccent,
-                onClick = onSelectVoiceStudio,
-                testTag = "nav_tab_voice"
-            )
-            FloatingPillNavIcon(
-                icon = Icons.Filled.Settings,
-                contentDescription = "Settings & API Keys",
-                selected = isSettingsActive,
-                accentColor = visualTheme.primaryAccent,
-                secondaryColor = visualTheme.secondaryAccent,
-                onClick = onSelectSettings,
-                testTag = "nav_tab_system"
-            )
-        }
-    }
-}
-
-@Composable
-private fun FloatingPillNavIcon(
-    icon: ImageVector,
-    contentDescription: String,
-    selected: Boolean,
-    accentColor: Color,
-    secondaryColor: Color,
-    onClick: () -> Unit,
-    testTag: String
-) {
-    val activeBrush = Brush.linearGradient(
-        colors = listOf(accentColor, secondaryColor)
-    )
-
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(48.dp)
-            .clip(CircleShape)
-            .then(
-                if (selected) {
-                    Modifier.background(activeBrush)
-                } else {
-                    Modifier.background(Color.White.copy(alpha = 0.06f))
-                }
-            )
-            .border(
-                width = 1.dp,
-                color = if (selected) Color.White.copy(alpha = 0.55f) else StudioGlassBorder,
-                shape = CircleShape
-            )
-            .clickable { onClick() }
-            .testTag(testTag)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = if (selected) JarvisObsidian else JarvisIceWhite,
-            modifier = Modifier.size(22.dp)
+        NavigationBarItem(
+            selected = isHomeActive,
+            onClick = onSelectHome,
+            icon = {
+                Icon(
+                    imageVector = Icons.Filled.Home,
+                    contentDescription = "হোম"
+                )
+            },
+            label = { Text("হোম") },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = JarvisObsidian,
+                selectedTextColor = visualTheme.primaryAccent,
+                indicatorColor = visualTheme.primaryAccent,
+                unselectedIconColor = JarvisMutedCyan,
+                unselectedTextColor = JarvisMutedCyan
+            ),
+            modifier = Modifier.testTag("nav_tab_hud")
+        )
+        NavigationBarItem(
+            selected = isVoiceStudioActive,
+            onClick = onSelectVoiceStudio,
+            icon = {
+                Icon(
+                    imageVector = Icons.Filled.GraphicEq,
+                    contentDescription = "ভয়েস"
+                )
+            },
+            label = { Text("ভয়েস") },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = JarvisObsidian,
+                selectedTextColor = visualTheme.primaryAccent,
+                indicatorColor = visualTheme.primaryAccent,
+                unselectedIconColor = JarvisMutedCyan,
+                unselectedTextColor = JarvisMutedCyan
+            ),
+            modifier = Modifier.testTag("nav_tab_voice")
+        )
+        NavigationBarItem(
+            selected = isControlActive,
+            onClick = onSelectControl,
+            icon = {
+                Icon(
+                    imageVector = Icons.Filled.Tune,
+                    contentDescription = "কন্ট্রোল"
+                )
+            },
+            label = { Text("কন্ট্রোল") },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = JarvisObsidian,
+                selectedTextColor = visualTheme.primaryAccent,
+                indicatorColor = visualTheme.primaryAccent,
+                unselectedIconColor = JarvisMutedCyan,
+                unselectedTextColor = JarvisMutedCyan
+            ),
+            modifier = Modifier.testTag("nav_tab_control")
+        )
+        NavigationBarItem(
+            selected = isSettingsActive,
+            onClick = onSelectSettings,
+            icon = {
+                Icon(
+                    imageVector = Icons.Filled.Settings,
+                    contentDescription = "সেটিংস"
+                )
+            },
+            label = { Text("সেটিংস") },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = JarvisObsidian,
+                selectedTextColor = visualTheme.primaryAccent,
+                indicatorColor = visualTheme.primaryAccent,
+                unselectedIconColor = JarvisMutedCyan,
+                unselectedTextColor = JarvisMutedCyan
+            ),
+            modifier = Modifier.testTag("nav_tab_system")
         )
     }
 }
+
 

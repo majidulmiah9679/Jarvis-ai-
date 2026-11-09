@@ -107,6 +107,12 @@ class JarvisVoiceManager(
     @Volatile
     private var isContinuousMicSessionLocked = false
 
+    @Volatile
+    private var isCurrentlySpeakingOutput = false
+
+    @Volatile
+    private var currentlySpeakingText = ""
+
     private var pendingRetryRunnable: Runnable? = null
 
     private var preferredEnglishLocale: Locale = Locale.UK
@@ -255,27 +261,32 @@ class JarvisVoiceManager(
 
     private fun finishSpeakingAndResumeMicIfNeeded() {
         speakingWatchdogJob?.cancel()
+        isCurrentlySpeakingOutput = false
+        currentlySpeakingText = ""
         stopSpeakingWaveformAnimation()
         val cb = onSpeakingFinishedCallback
         onSpeakingFinishedCallback = null
 
         val shouldKeepListening = isContinuousMicSessionLocked ||
             _isLiveConversationActive.value ||
+            currentSettings.continuousBackgroundMic ||
             currentSettings.handsFreeMode
 
         if (cb != null) {
-            mainHandler.postDelayed({ cb.invoke() }, 350L)
+            mainHandler.postDelayed({ cb.invoke() }, 180L)
         } else if (shouldKeepListening) {
+            _hudState.value = VoiceHudState.LISTENING
+            _voiceStatusMessage.value =
+                "মাইক সচল আছে • কথা বলুন, ${currentSettings.bossTitle} (অবিরাম লিসেনিং চালু)…"
             mainHandler.postDelayed({
-                if (isContinuousMicSessionLocked || _isLiveConversationActive.value || currentSettings.handsFreeMode) {
+                if (!isRecognizerActive && (isContinuousMicSessionLocked || _isLiveConversationActive.value || currentSettings.continuousBackgroundMic || currentSettings.handsFreeMode)) {
                     startListening(
                         languageMode = currentSettings.languageMode,
-                        wakeWordStandbyOnly = false
+                        wakeWordStandbyOnly = false,
+                        interruptSpeaking = false
                     )
-                } else {
-                    _hudState.value = VoiceHudState.IDLE
                 }
-            }, 350L)
+            }, 180L)
         } else {
             _hudState.value = VoiceHudState.IDLE
         }
@@ -593,8 +604,7 @@ class JarvisVoiceManager(
     private fun updateEngineBadge(settings: JarvisSettings) {
         val persona = findVoicePersonaById(settings.selectedVoicePersonaId)
         val hasElevenKey = resolveElevenLabsApiKey(settings).isNotBlank()
-        val hasGeminiKey = settings.customGeminiApiKey.trim().startsWith("AIza") ||
-            settings.secondaryAiApiKey.trim().startsWith("AIza")
+        val hasGeminiKey = resolveGeminiApiKeyForTts(settings).isNotBlank()
         _activeVoiceEngineLabel.value = when {
             settings.ttsEngine == "ELEVENLABS" && hasElevenKey ->
                 "ELEVENLABS • ${persona.name.uppercase()}"
@@ -626,23 +636,31 @@ class JarvisVoiceManager(
 
     private fun resolveGeminiApiKeyForTts(settings: JarvisSettings = currentSettings): String {
         val primary = settings.customGeminiApiKey.trim().removePrefix("Bearer ").trim()
-        if (primary.startsWith("AIza")) return primary
+        if (primary.startsWith("AIza") || primary.startsWith("AQ.")) return primary
         val secondary = settings.secondaryAiApiKey.trim().removePrefix("Bearer ").trim()
-        if (secondary.startsWith("AIza")) return secondary
+        if (secondary.startsWith("AIza") || secondary.startsWith("AQ.")) return secondary
         return ""
     }
 
     fun setProcessingState() {
         _hudState.value = VoiceHudState.PROCESSING
         _partialTranscript.value = ""
+        // Keep the microphone listening even while JARVIS is thinking (PROCESSING)
+        if (!isRecognizerActive && (isContinuousMicSessionLocked || _isLiveConversationActive.value || currentSettings.continuousBackgroundMic || currentSettings.handsFreeMode)) {
+            scheduleSilentContinuousRearm(delayMs = 200L)
+        }
     }
 
     fun setIdleState() {
         val shouldKeepListening = isContinuousMicSessionLocked ||
             _isLiveConversationActive.value ||
+            currentSettings.continuousBackgroundMic ||
             currentSettings.handsFreeMode
         if (shouldKeepListening) {
-            startListening(currentSettings.languageMode, wakeWordStandbyOnly = false)
+            _hudState.value = VoiceHudState.LISTENING
+            if (!isRecognizerActive) {
+                startListening(currentSettings.languageMode, wakeWordStandbyOnly = false, interruptSpeaking = false)
+            }
         } else if (_hudState.value == VoiceHudState.PROCESSING) {
             _hudState.value = VoiceHudState.IDLE
         }
@@ -655,16 +673,19 @@ class JarvisVoiceManager(
 
     /**
      * Starts listening with the microphone.
-     * When [wakeWordStandbyOnly] is false, locks in the continuous session if continuousBackgroundMic
-     * or live conversation is active, so the microphone never drops out between utterances!
+     * Supports Full-Duplex Simultaneous Listening: when [interruptSpeaking] is false,
+     * the microphone stays ON even while JARVIS is speaking so the user can interrupt (barge-in) anytime!
      */
     fun startListening(
         languageMode: String = currentSettings.languageMode,
-        wakeWordStandbyOnly: Boolean = false
+        wakeWordStandbyOnly: Boolean = false,
+        interruptSpeaking: Boolean = false
     ) {
         cancelPendingRetry()
         if (!wakeWordStandbyOnly) {
-            haltPlaybackInternal()
+            if (interruptSpeaking) {
+                haltPlaybackInternal()
+            }
             if (currentSettings.continuousBackgroundMic) {
                 isContinuousMicSessionLocked = true
                 _isLiveConversationActive.value = true
@@ -680,13 +701,15 @@ class JarvisVoiceManager(
                     _isLiveConversationActive.value = false
                     _voiceStatusMessage.value =
                         "SpeechRecognizer service not available on this device. Use text input or install Google Speech Services."
-                    _hudState.value = VoiceHudState.IDLE
+                    if (!isCurrentlySpeakingOutput) {
+                        _hudState.value = VoiceHudState.IDLE
+                    }
                     return@post
                 }
 
-                // If recognizer is already actively listening, just keep it running smoothly without disturbance
+                // If recognizer is already actively listening, keep it running smoothly without disturbance
                 if (isRecognizerActive && speechRecognizer != null) {
-                    if (!wakeWordStandbyOnly) {
+                    if (!wakeWordStandbyOnly && !isCurrentlySpeakingOutput && _hudState.value != VoiceHudState.PROCESSING) {
                         _hudState.value = VoiceHudState.LISTENING
                         _voiceStatusMessage.value =
                             "মাইক সচল আছে • কথা বলুন, ${currentSettings.bossTitle} (অবিরাম লিসেনিং চালু)…"
@@ -714,18 +737,24 @@ class JarvisVoiceManager(
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                     // Extended silence windows so the mic listens patiently without cutting off mid-thought
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3500L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2800L)
                     putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 15000L)
                 }
 
-                _partialTranscript.value = ""
+                if (!isCurrentlySpeakingOutput) {
+                    _partialTranscript.value = ""
+                }
                 isRecognizerActive = true
                 if (wakeWordStandbyOnly) {
-                    _hudState.value = VoiceHudState.IDLE
+                    if (!isCurrentlySpeakingOutput) {
+                        _hudState.value = VoiceHudState.IDLE
+                    }
                     _voiceStatusMessage.value =
                         "Wake Word Ready • Say \"Hey JARVIS\" or tap the Mic button."
-                } else {
+                } else if (isCurrentlySpeakingOutput) {
+                    _hudState.value = VoiceHudState.SPEAKING
+                } else if (_hudState.value != VoiceHudState.PROCESSING) {
                     _hudState.value = VoiceHudState.LISTENING
                     _voiceStatusMessage.value =
                         "মাইক চালু আছে ($localeTag) • কথা বলুন, ${currentSettings.bossTitle} (মাইক বন্ধ হবে না)…"
@@ -734,9 +763,9 @@ class JarvisVoiceManager(
             } catch (e: Exception) {
                 Log.e(TAG, "Error starting SpeechRecognizer", e)
                 isRecognizerActive = false
-                if (isContinuousMicSessionLocked) {
-                    scheduleSilentContinuousRearm(delayMs = 800L, recreateRecognizer = true)
-                } else {
+                if (isContinuousMicSessionLocked || _isLiveConversationActive.value || currentSettings.continuousBackgroundMic) {
+                    scheduleSilentContinuousRearm(delayMs = 650L, recreateRecognizer = true)
+                } else if (!isCurrentlySpeakingOutput) {
                     _hudState.value = VoiceHudState.IDLE
                     _voiceStatusMessage.value = "Microphone error: ${e.localizedMessage}"
                 }
@@ -745,20 +774,21 @@ class JarvisVoiceManager(
     }
 
     /**
-     * Silently re-arms the SpeechRecognizer without changing _hudState to IDLE,
-     * preventing any UI jumping, flickering, or interruption while Continuous Mic is ON.
+     * Silently re-arms the SpeechRecognizer EVEN WHILE JARVIS IS SPEAKING OR PROCESSING,
+     * so the microphone never turns off and the user can speak at any moment (Full-Duplex Barge-In).
      */
     private fun scheduleSilentContinuousRearm(
-        delayMs: Long = 350L,
+        delayMs: Long = 280L,
         recreateRecognizer: Boolean = false
     ) {
         cancelPendingRetry()
         val runnable = Runnable {
             pendingRetryRunnable = null
-            if (!isContinuousMicSessionLocked && !_isLiveConversationActive.value && !currentSettings.handsFreeMode) {
-                return@Runnable
-            }
-            if (_hudState.value == VoiceHudState.SPEAKING || _hudState.value == VoiceHudState.PROCESSING) {
+            if (!isContinuousMicSessionLocked &&
+                !_isLiveConversationActive.value &&
+                !currentSettings.continuousBackgroundMic &&
+                !currentSettings.handsFreeMode
+            ) {
                 return@Runnable
             }
             if (recreateRecognizer) {
@@ -771,7 +801,8 @@ class JarvisVoiceManager(
             isRecognizerActive = false
             startListening(
                 languageMode = currentSettings.languageMode,
-                wakeWordStandbyOnly = false
+                wakeWordStandbyOnly = false,
+                interruptSpeaking = false
             )
         }
         pendingRetryRunnable = runnable
@@ -839,10 +870,8 @@ class JarvisVoiceManager(
     }
 
     /**
-     * Speaks the AI response using the selected Real Human Voice Persona:
-     * 1. ElevenLabs Neural Voice (if selected & key present)
-     * 2. Gemini 2.5 Flash Native Audio TTS (if selected & Gemini key present)
-     * 3. Android Neural Multi-Voice Phone TTS (with automatic Male/Female voice & natural pitch/rate tuning)
+     * Speaks the AI response using the selected Real Human Voice Persona WHILE KEEPING THE MICROPHONE ON!
+     * If the user says anything while JARVIS is speaking, JARVIS hears it (Barge-In) and responds!
      */
     fun speak(
         text: String,
@@ -857,20 +886,21 @@ class JarvisVoiceManager(
             return
         }
 
-        // Stop any active recognizer while JARVIS speaks so it doesn't hear its own voice
-        cancelPendingRetry()
-        if (isRecognizerActive) {
-            isRecognizerActive = false
-            mainHandler.post {
-                try {
-                    speechRecognizer?.cancel()
-                } catch (_: Exception) {
-                }
-            }
-        }
-
         haltPlaybackInternal()
+        isCurrentlySpeakingOutput = true
+        currentlySpeakingText = cleanText
         onSpeakingFinishedCallback = onComplete
+
+        // CRITICAL FULL-DUPLEX FIX: Do NOT cancel SpeechRecognizer while JARVIS speaks!
+        // Instead, ensure the microphone stays actively listening while JARVIS is speaking
+        // so if the user says anything mid-speech, JARVIS hears it immediately!
+        val keepMicAliveWhileSpeaking = isContinuousMicSessionLocked ||
+            _isLiveConversationActive.value ||
+            settings.continuousBackgroundMic ||
+            settings.handsFreeMode
+        if (keepMicAliveWhileSpeaking && !isRecognizerActive) {
+            scheduleSilentContinuousRearm(delayMs = 220L)
+        }
 
         val persona = findVoicePersonaById(settings.selectedVoicePersonaId)
         val elevenApiKey = resolveElevenLabsApiKey(settings)
@@ -1291,6 +1321,8 @@ class JarvisVoiceManager(
     private fun haltPlaybackInternal() {
         speakingWatchdogJob?.cancel()
         speakingWatchdogJob = null
+        isCurrentlySpeakingOutput = false
+        currentlySpeakingText = ""
         stopSpeakingWaveformAnimation()
         mainHandler.post {
             try {
@@ -1311,6 +1343,8 @@ class JarvisVoiceManager(
     fun stopSpeaking() {
         pendingUtteranceBeforeInit = null
         onSpeakingFinishedCallback = null
+        isCurrentlySpeakingOutput = false
+        currentlySpeakingText = ""
         speakingWatchdogJob?.cancel()
         speakingWatchdogJob = null
         mainHandler.post {
@@ -1328,8 +1362,9 @@ class JarvisVoiceManager(
             } catch (_: Exception) {
             }
             if (_hudState.value == VoiceHudState.SPEAKING) {
-                if (isContinuousMicSessionLocked || _isLiveConversationActive.value) {
-                    scheduleSilentContinuousRearm(delayMs = 350L)
+                if (isContinuousMicSessionLocked || _isLiveConversationActive.value || currentSettings.continuousBackgroundMic) {
+                    _hudState.value = VoiceHudState.LISTENING
+                    scheduleSilentContinuousRearm(delayMs = 200L)
                 } else {
                     _hudState.value = VoiceHudState.IDLE
                     _voiceStatusMessage.value = "ভয়েস আউটপুট থামানো হয়েছে।"
@@ -1360,17 +1395,48 @@ class JarvisVoiceManager(
         _audioLevel.value = 0.08f
     }
 
+    /**
+     * Distinguishes JARVIS's own TTS speaker output from the user's voice when the mic is
+     * simultaneously listening while JARVIS is speaking (Full-Duplex Barge-In).
+     */
+    private fun isLikelyTtsSelfEcho(heardText: String, spokenText: String): Boolean {
+        if (!isCurrentlySpeakingOutput || spokenText.isBlank()) return false
+        val cleanHeard = heardText.trim().lowercase()
+        val cleanSpoken = spokenText.trim().lowercase()
+        if (cleanHeard.isBlank()) return true
+
+        // Explicit user barge-in / interruption keywords are NEVER ignored as echo
+        val bargeInKeywords = listOf(
+            "থামো", "চুপ", "স্টপ", "বন্ধ কর", "শোনো", "এই যে", "আচ্ছা জারভিস", "হেই জারভিস", "হ্যালো জারভিস",
+            "stop", "wait", "hold on", "listen", "hey jarvis", "ok jarvis", "pause", "cancel"
+        )
+        if (bargeInKeywords.any { cleanHeard.contains(it) }) {
+            return false
+        }
+
+        val wordRegex = Regex("[\\p{L}\\p{N}]+")
+        val heardWords = wordRegex.findAll(cleanHeard).map { it.value }.filter { it.length > 1 }.toList()
+        if (heardWords.isEmpty()) return false
+
+        val spokenWordsSet = wordRegex.findAll(cleanSpoken).map { it.value }.toSet()
+        val matchingWordsCount = heardWords.count { word ->
+            spokenWordsSet.contains(word) || cleanSpoken.contains(word)
+        }
+        val overlapRatio = matchingWordsCount.toFloat() / heardWords.size.toFloat()
+        return overlapRatio >= 0.65f
+    }
+
     private fun createRecognitionListener(): RecognitionListener {
         return object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 isRecognizerActive = true
-                if (!isListeningForWakeWordOnly) {
+                if (!isListeningForWakeWordOnly && !isCurrentlySpeakingOutput && _hudState.value != VoiceHudState.PROCESSING) {
                     _hudState.value = VoiceHudState.LISTENING
                 }
             }
 
             override fun onBeginningOfSpeech() {
-                if (!isListeningForWakeWordOnly) {
+                if (!isListeningForWakeWordOnly && !isCurrentlySpeakingOutput && _hudState.value != VoiceHudState.PROCESSING) {
                     _hudState.value = VoiceHudState.LISTENING
                 }
             }
@@ -1386,7 +1452,9 @@ class JarvisVoiceManager(
 
             override fun onEndOfSpeech() {
                 isRecognizerActive = false
-                _audioLevel.value = 0.08f
+                if (!isCurrentlySpeakingOutput) {
+                    _audioLevel.value = 0.08f
+                }
             }
 
             override fun onError(error: Int) {
@@ -1394,13 +1462,17 @@ class JarvisVoiceManager(
                     return
                 }
                 isRecognizerActive = false
-                _audioLevel.value = 0.08f
+                if (!isCurrentlySpeakingOutput) {
+                    _audioLevel.value = 0.08f
+                }
 
                 // Fatal permission error cannot be retried until user grants permission
                 if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
                     isContinuousMicSessionLocked = false
                     _isLiveConversationActive.value = false
-                    _hudState.value = VoiceHudState.IDLE
+                    if (!isCurrentlySpeakingOutput) {
+                        _hudState.value = VoiceHudState.IDLE
+                    }
                     _voiceStatusMessage.value = "মাইক্রোফোন পারমিশন প্রয়োজন (Microphone permission required)।"
                     return
                 }
@@ -1417,20 +1489,22 @@ class JarvisVoiceManager(
                     speechRecognizer = null
                 }
 
-                // CRITICAL: If Continuous Mic / Live Conversation is active, NEVER drop to IDLE on silence!
-                // Keep _hudState = LISTENING steady and smoothly re-arm listening so the mic never stops!
+                // CRITICAL FULL-DUPLEX: If Continuous Mic / Live Conversation is active, NEVER drop to IDLE!
+                // Re-arm listening even while SPEAKING or PROCESSING so the mic is ALWAYS ON!
                 val shouldKeepMicAlive = isContinuousMicSessionLocked ||
                     _isLiveConversationActive.value ||
+                    currentSettings.continuousBackgroundMic ||
                     currentSettings.handsFreeMode
 
-                if (shouldKeepMicAlive &&
-                    _hudState.value != VoiceHudState.SPEAKING &&
-                    _hudState.value != VoiceHudState.PROCESSING
-                ) {
-                    _hudState.value = VoiceHudState.LISTENING
-                    _voiceStatusMessage.value =
-                        "মাইক সচল আছে • কথা বলুন, ${currentSettings.bossTitle} (অবিরাম লিসেনিং চালু)…"
-                    val retryDelay = if (needsRecognizerReset) 650L else 350L
+                if (shouldKeepMicAlive) {
+                    if (isCurrentlySpeakingOutput) {
+                        _hudState.value = VoiceHudState.SPEAKING
+                    } else if (_hudState.value != VoiceHudState.PROCESSING) {
+                        _hudState.value = VoiceHudState.LISTENING
+                        _voiceStatusMessage.value =
+                            "মাইক সচল আছে • কথা বলুন, ${currentSettings.bossTitle} (অবিরাম লিসেনিং চালু)…"
+                    }
+                    val retryDelay = if (needsRecognizerReset) 550L else 280L
                     scheduleSilentContinuousRearm(
                         delayMs = retryDelay,
                         recreateRecognizer = needsRecognizerReset
@@ -1452,19 +1526,41 @@ class JarvisVoiceManager(
 
             override fun onResults(results: Bundle?) {
                 isRecognizerActive = false
-                _audioLevel.value = 0.08f
+                if (!isCurrentlySpeakingOutput) {
+                    _audioLevel.value = 0.08f
+                }
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
                 val primaryTranscript = matches.firstOrNull()?.trim().orEmpty()
                 _partialTranscript.value = ""
 
+                val shouldKeepMicAlive = isContinuousMicSessionLocked ||
+                    _isLiveConversationActive.value ||
+                    currentSettings.continuousBackgroundMic ||
+                    currentSettings.handsFreeMode
+
                 if (primaryTranscript.isBlank()) {
-                    if (isContinuousMicSessionLocked || _isLiveConversationActive.value || currentSettings.handsFreeMode) {
-                        _hudState.value = VoiceHudState.LISTENING
-                        scheduleSilentContinuousRearm(delayMs = 300L)
-                    } else {
+                    if (shouldKeepMicAlive) {
+                        if (!isCurrentlySpeakingOutput && _hudState.value != VoiceHudState.PROCESSING) {
+                            _hudState.value = VoiceHudState.LISTENING
+                        }
+                        scheduleSilentContinuousRearm(delayMs = 220L)
+                    } else if (!isCurrentlySpeakingOutput) {
                         _hudState.value = VoiceHudState.IDLE
                     }
                     return
+                }
+
+                // If JARVIS is currently speaking and the mic only heard JARVIS's own TTS speaker output,
+                // ignore the self-echo and immediately re-arm the microphone so it keeps listening for the user!
+                if (isCurrentlySpeakingOutput && isLikelyTtsSelfEcho(primaryTranscript, currentlySpeakingText)) {
+                    scheduleSilentContinuousRearm(delayMs = 180L)
+                    return
+                }
+
+                // User spoke a real utterance (including mid-speech Barge-In while JARVIS was talking!)
+                // Stop any ongoing TTS output immediately and process the user's new utterance!
+                if (isCurrentlySpeakingOutput) {
+                    haltPlaybackInternal()
                 }
 
                 var wakeMatch: WakeWordMatchResult = WakeWordMatchResult.NoWakeWord
@@ -1489,7 +1585,7 @@ class JarvisVoiceManager(
                         if (onWakeWordTriggered != null) {
                             onWakeWordTriggered.invoke(matched.matchedTrigger, matched.isBanglaTrigger, null)
                         } else {
-                            startListening(currentSettings.languageMode, wakeWordStandbyOnly = false)
+                            startListening(currentSettings.languageMode, wakeWordStandbyOnly = false, interruptSpeaking = false)
                         }
                     }
 
@@ -1504,6 +1600,9 @@ class JarvisVoiceManager(
                         _voiceStatusMessage.value =
                             "Wake Word \"${matched.matchedTrigger}\" + ${detected.language.nativeLabel} command — processing…"
                         _hudState.value = VoiceHudState.PROCESSING
+                        if (shouldKeepMicAlive) {
+                            scheduleSilentContinuousRearm(delayMs = 220L)
+                        }
                         if (onWakeWordTriggered != null) {
                             onWakeWordTriggered.invoke(matched.matchedTrigger, matched.isBanglaTrigger, matched.command)
                         } else {
@@ -1518,6 +1617,9 @@ class JarvisVoiceManager(
                         _voiceStatusMessage.value =
                             "শোনা হয়েছে (${detected.language.nativeLabel}): “$primaryTranscript” — উত্তর তৈরি হচ্ছে…"
                         _hudState.value = VoiceHudState.PROCESSING
+                        if (shouldKeepMicAlive) {
+                            scheduleSilentContinuousRearm(delayMs = 220L)
+                        }
                         onSpeechResult(primaryTranscript)
                     }
                 }
@@ -1529,6 +1631,20 @@ class JarvisVoiceManager(
                     .orEmpty()
                 val partial = partialList.firstOrNull()?.trim().orEmpty()
                 if (partial.isBlank()) return
+
+                // If JARVIS is speaking, check if this partial speech is the user interrupting (Barge-In)!
+                if (isCurrentlySpeakingOutput) {
+                    if (isLikelyTtsSelfEcho(partial, currentlySpeakingText)) {
+                        return
+                    }
+                    val wordCount = partial.split(Regex("\\s+")).count { it.length > 1 }
+                    if (wordCount >= 2) {
+                        // User is speaking while JARVIS is talking — pause JARVIS's voice so we hear the user clearly!
+                        haltPlaybackInternal()
+                        _hudState.value = VoiceHudState.LISTENING
+                        _voiceStatusMessage.value = "আপনার কথা শুনছি, ${currentSettings.bossTitle}…"
+                    }
+                }
 
                 _partialTranscript.value = partial
                 detectAndConfigureLanguage(partial, currentSettings.languageMode)

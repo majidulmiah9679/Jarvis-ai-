@@ -48,6 +48,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -441,49 +442,96 @@ fun SystemStatusScreen(
 
     val detectedKeyLabel = JarvisBrainService.detectKeyType(primaryKeyInput)
 
+    // Auto-save & auto-verify whenever the user pastes or edits an API key
+    LaunchedEffect(primaryKeyInput, providerModeInput) {
+        val clean = primaryKeyInput.trim()
+        if (clean.isEmpty()) {
+            keyValidationStatus = null
+            keyValidationMessage = ""
+            return@LaunchedEffect
+        }
+        kotlinx.coroutines.delay(450L)
+        onSaveUniversalAiConfig(
+            primaryKeyInput,
+            secondaryKeyInput,
+            providerModeInput,
+            customBaseUrlInput,
+            customModelInput,
+            maxTokensInput,
+            elevenLabsKeyInput
+        )
+        if (clean.length >= 16) {
+            isValidatingKey = true
+            val testResult = if (onValidateApiKey != null) {
+                onValidateApiKey(
+                    primaryKeyInput,
+                    providerModeInput,
+                    customModelInput,
+                    customBaseUrlInput
+                )
+            } else {
+                JarvisBrainService().testApiKeyOrToken(
+                    apiKey = primaryKeyInput,
+                    providerMode = providerModeInput,
+                    customModel = customModelInput,
+                    customBaseUrl = customBaseUrlInput
+                )
+            }
+            isValidatingKey = false
+            if (testResult.isSuccess) {
+                keyValidationStatus = true
+                keyValidationMessage = "🟢 ${testResult.getOrNull() ?: "API Key সঠিক ও সম্পূর্ণ সক্রিয়!"}"
+            } else {
+                keyValidationStatus = false
+                val err = testResult.exceptionOrNull()?.localizedMessage ?: "Unknown error"
+                keyValidationMessage = "🔴 ভুল API Key বা সংযোগে ত্রুটি: $err"
+            }
+        }
+    }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 110.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
             Text(
-                text = "Settings & API Keys",
-                style = MaterialTheme.typography.headlineMedium,
+                text = "সেটিংস ও API Key",
+                style = MaterialTheme.typography.headlineSmall,
                 color = JarvisIceWhite,
                 fontWeight = FontWeight.Bold
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "Gemini, Groq, OpenAI, OpenRouter, ElevenLabs সহ যেকোনো API Key বা Token এখানে সহজেই বসান।",
-                style = MaterialTheme.typography.bodyMedium,
+                text = "সিম্পল অ্যান্ড্রয়েড সেটিংস — Gemini (AQ. / AIza), ভয়েস ও মাইক কন্ট্রোল",
+                style = MaterialTheme.typography.bodySmall,
                 color = StudioSubtleText
             )
         }
 
-        // 1. UNIVERSAL AI API KEY & TOKEN STUDIO CARD
+        // 1. SIMPLE ANDROID SYSTEM API KEY CARD
         item {
             Surface(
                 color = StudioDarkCard,
-                shape = RoundedCornerShape(26.dp),
+                shape = RoundedCornerShape(14.dp),
                 border = BorderStroke(1.dp, StudioDarkCardBorder),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("gemini_api_key_setup_card")
             ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Key, contentDescription = null, tint = StudioGoldLight)
+                            Icon(Icons.Filled.Key, contentDescription = null, tint = StudioGoldLight, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "AI API Keys & Tokens",
+                                text = "১. AI API Key সেটআপ",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = JarvisIceWhite,
                                 fontWeight = FontWeight.Bold
@@ -491,7 +539,7 @@ fun SystemStatusScreen(
                         }
                         Surface(
                             color = StudioGlassFill,
-                            shape = RoundedCornerShape(50),
+                            shape = RoundedCornerShape(6.dp),
                             border = BorderStroke(1.dp, StudioGlassBorder)
                         ) {
                             Text(
@@ -499,14 +547,14 @@ fun SystemStatusScreen(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = StudioGoldLight,
                                 fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    // Provider Mode Pills
+                    // Provider Mode Chips (Simple Rectangular Android Chips)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -524,26 +572,26 @@ fun SystemStatusScreen(
                             val selected = providerModeInput == code
                             Surface(
                                 color = if (selected) StudioGoldLight else StudioGlassFill,
-                                shape = RoundedCornerShape(50),
+                                shape = RoundedCornerShape(8.dp),
                                 border = BorderStroke(1.dp, if (selected) StudioGoldLight else StudioGlassBorder),
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable { providerModeInput = code }
                             ) {
                                 Text(
                                     text = label,
                                     style = MaterialTheme.typography.labelMedium,
                                     color = if (selected) JarvisObsidian else JarvisIceWhite,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    // Main API Key / Token Field with Live Green/Red Validation Status
+                    // Main API Key Input with Live Green/Red Status
                     val borderColor = when (keyValidationStatus) {
                         true -> JarvisEmerald
                         false -> JarvisCrimson
@@ -561,13 +609,13 @@ fun SystemStatusScreen(
                         label = {
                             Text(
                                 text = when (keyValidationStatus) {
-                                    true -> "Primary API Key (✅ ভেরিফাইড ও সক্রিয়)"
-                                    false -> "Primary API Key (❌ ইনভ্যালিড বা মেয়াদ শেষ)"
-                                    null -> "Primary API Key / Token (AIza..., gsk_..., sk-...)"
+                                    true -> "Primary API Key (✅ সঠিক ও সক্রিয়)"
+                                    false -> "Primary API Key (❌ ভুল বা মেয়াদ শেষ)"
+                                    null -> "Primary API Key (AQ...., AIza..., gsk_..., sk-...)"
                                 }
                             )
                         },
-                        placeholder = { Text("Paste any Gemini, Groq, OpenAI, or Bearer token") },
+                        placeholder = { Text("এখানে আপনার API Key পেস্ট করুন") },
                         singleLine = true,
                         visualTransformation = if (showPrimaryKey) {
                             VisualTransformation.None
@@ -612,7 +660,7 @@ fun SystemStatusScreen(
                                 null -> StudioGlassBorder
                             }
                         ),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("custom_gemini_api_key_input")
@@ -620,14 +668,14 @@ fun SystemStatusScreen(
 
                     // Live Status Banner right below Key Input: Green for Valid, Red for Invalid
                     if (keyValidationMessage.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Surface(
                             color = if (keyValidationStatus == true) {
-                                JarvisEmerald.copy(alpha = 0.16f)
+                                JarvisEmerald.copy(alpha = 0.15f)
                             } else {
-                                JarvisCrimson.copy(alpha = 0.16f)
+                                JarvisCrimson.copy(alpha = 0.15f)
                             },
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(8.dp),
                             border = BorderStroke(
                                 1.dp,
                                 if (keyValidationStatus == true) JarvisEmerald else JarvisCrimson
@@ -655,93 +703,13 @@ fun SystemStatusScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Backup / Secondary API Key Field
-                    OutlinedTextField(
-                        value = secondaryKeyInput,
-                        onValueChange = {
-                            secondaryKeyInput = it
-                            statusConfirmation = ""
-                        },
-                        label = { Text("Backup / 2nd API Key (Optional Auto-Failover)") },
-                        placeholder = { Text("Second key if primary key hits quota limit") },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = StudioVioletAccent,
-                            unfocusedBorderColor = StudioGlassBorder
-                        ),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("secondary_ai_key_input")
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // ElevenLabs Voice API Key
-                    OutlinedTextField(
-                        value = elevenLabsKeyInput,
-                        onValueChange = {
-                            elevenLabsKeyInput = it
-                            statusConfirmation = ""
-                        },
-                        label = { Text("ElevenLabs Voice Key (Optional — Phone TTS Built-in)") },
-                        placeholder = { Text("Paste ElevenLabs xi-api-key") },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = JarvisEmerald,
-                            unfocusedBorderColor = StudioGlassBorder
-                        ),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("settings_elevenlabs_key_input")
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Token Limit Selector
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Max Tokens:",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = JarvisIceWhite
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(512, 1024, 2048, 4096).forEach { tokenVal ->
-                                val selected = maxTokensInput == tokenVal
-                                Surface(
-                                    color = if (selected) StudioGoldLight else StudioGlassFill,
-                                    shape = RoundedCornerShape(50),
-                                    border = BorderStroke(1.dp, if (selected) StudioGoldLight else StudioGlassBorder),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(50))
-                                        .clickable { maxTokensInput = tokenVal }
-                                ) {
-                                    Text(
-                                        text = "$tokenVal",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (selected) JarvisObsidian else JarvisIceWhite,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Expandable Advanced Model Name & Custom Base URL
+                    // Optional Expandable Advanced Fields (Backup Key, ElevenLabs Key, Model Name)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(6.dp))
                             .clickable { showAdvancedOptions = !showAdvancedOptions }
                             .padding(vertical = 4.dp)
                     ) {
@@ -752,49 +720,78 @@ fun SystemStatusScreen(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Advanced: Custom Model Name & Base URL",
-                            style = MaterialTheme.typography.labelSmall,
+                            text = "অতিরিক্ত অপশন (Backup Key, ElevenLabs, Model Name)",
+                            style = MaterialTheme.typography.labelMedium,
                             color = StudioGoldLight
                         )
                     }
 
                     AnimatedVisibility(visible = showAdvancedOptions) {
                         Column(
-                            modifier = Modifier.padding(top = 6.dp),
+                            modifier = Modifier.padding(top = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             OutlinedTextField(
+                                value = secondaryKeyInput,
+                                onValueChange = {
+                                    secondaryKeyInput = it
+                                    statusConfirmation = ""
+                                },
+                                label = { Text("Backup / 2nd API Key (Optional)") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("secondary_ai_key_input")
+                            )
+
+                            OutlinedTextField(
+                                value = elevenLabsKeyInput,
+                                onValueChange = {
+                                    elevenLabsKeyInput = it
+                                    statusConfirmation = ""
+                                },
+                                label = { Text("ElevenLabs Voice Key (Optional)") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("settings_elevenlabs_key_input")
+                            )
+
+                            OutlinedTextField(
                                 value = customModelInput,
                                 onValueChange = { customModelInput = it },
-                                label = { Text("Custom Model ID (e.g. gemini-2.5-flash, gpt-4o-mini)") },
+                                label = { Text("Custom Model ID (e.g. gemini-2.5-flash)") },
                                 singleLine = true,
-                                shape = RoundedCornerShape(14.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier.fillMaxWidth()
                             )
+
                             OutlinedTextField(
                                 value = customBaseUrlInput,
                                 onValueChange = { customBaseUrlInput = it },
                                 label = { Text("Custom Endpoint URL") },
                                 singleLine = true,
-                                shape = RoundedCornerShape(14.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
                     }
 
                     if (statusConfirmation.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = statusConfirmation,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodySmall,
                             color = JarvisEmerald,
                             fontWeight = FontWeight.Bold
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    // 3 Actions: Save All Keys | Verify Key Live (Green/Red) | Test AI Brain
+                    // 3 Clean Android System Buttons: Save | Check Key (Green/Red) | Test AI
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -810,13 +807,13 @@ fun SystemStatusScreen(
                                     maxTokensInput,
                                     elevenLabsKeyInput
                                 )
-                                statusConfirmation = "✅ সব API Key ও Token সেভ হয়েছে!"
+                                statusConfirmation = "✅ সেভ হয়েছে!"
                             },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = StudioGoldWarm,
+                                containerColor = StudioGoldLight,
                                 contentColor = JarvisObsidian
                             ),
-                            shape = RoundedCornerShape(50),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("save_gemini_api_key_button")
@@ -824,16 +821,15 @@ fun SystemStatusScreen(
                             Text("Save", fontWeight = FontWeight.Bold)
                         }
 
-                        // Live Key Validation Button
                         Button(
                             onClick = {
                                 if (primaryKeyInput.isBlank()) {
                                     keyValidationStatus = false
-                                    keyValidationMessage = "❌ কোনো API Key দেননি। অনুগ্রহ করে আগে Key বসান।"
+                                    keyValidationMessage = "❌ আগে API Key বসান।"
                                     return@Button
                                 }
                                 isValidatingKey = true
-                                keyValidationMessage = "Key ভেরিফাই করা হচ্ছে…"
+                                keyValidationMessage = "Key চেক করা হচ্ছে…"
                                 coroutineScope.launch {
                                     val testResult = if (onValidateApiKey != null) {
                                         onValidateApiKey(
@@ -853,7 +849,7 @@ fun SystemStatusScreen(
                                     isValidatingKey = false
                                     if (testResult.isSuccess) {
                                         keyValidationStatus = true
-                                        keyValidationMessage = "🟢 ${testResult.getOrNull() ?: "API Key সঠিক ও সম্পূর্ণ সক্রিয়!"}"
+                                        keyValidationMessage = "🟢 ${testResult.getOrNull() ?: "API Key সঠিক ও সক্রিয়!"}"
                                         onSaveUniversalAiConfig(
                                             primaryKeyInput,
                                             secondaryKeyInput,
@@ -876,9 +872,9 @@ fun SystemStatusScreen(
                                     false -> JarvisCrimson
                                     null -> JarvisElectricBlue
                                 },
-                                contentColor = JarvisIceWhite
+                                contentColor = if (keyValidationStatus == true) JarvisObsidian else JarvisIceWhite
                             ),
-                            shape = RoundedCornerShape(50),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
                                 .weight(1.3f)
                                 .testTag("verify_api_key_button")
@@ -890,7 +886,7 @@ fun SystemStatusScreen(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("যাচাই হচ্ছে…", style = MaterialTheme.typography.labelSmall)
+                                Text("যাচাই…", style = MaterialTheme.typography.labelSmall)
                             } else {
                                 Icon(
                                     imageVector = when (keyValidationStatus) {
@@ -904,7 +900,7 @@ fun SystemStatusScreen(
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     text = when (keyValidationStatus) {
-                                        true -> "সঠিক (Active)"
+                                        true -> "সঠিক (Green)"
                                         false -> "ভুল Key (Red)"
                                         null -> "Check Key"
                                     },
@@ -928,7 +924,7 @@ fun SystemStatusScreen(
                                 onTestAiBrain()
                             },
                             border = BorderStroke(1.dp, StudioGlassBorder),
-                            shape = RoundedCornerShape(50),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("test_ai_brain_button")
@@ -940,20 +936,20 @@ fun SystemStatusScreen(
             }
         }
 
-        // 2. SIMPLE LANGUAGE & VOICE CARD
+        // 2. SIMPLE ANDROID SYSTEM VOICE & MICROPHONE SETTINGS CARD
         item {
             Surface(
                 color = StudioDarkCard,
-                shape = RoundedCornerShape(26.dp),
+                shape = RoundedCornerShape(14.dp),
                 border = BorderStroke(1.dp, StudioDarkCardBorder),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Tune, contentDescription = null, tint = StudioGoldLight)
+                        Icon(Icons.Filled.Tune, contentDescription = null, tint = StudioGoldLight, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Language & Voice",
+                            text = "২. ভয়েস ও মাইক সেটিংস",
                             style = MaterialTheme.typography.titleMedium,
                             color = JarvisIceWhite,
                             fontWeight = FontWeight.Bold
@@ -961,39 +957,40 @@ fun SystemStatusScreen(
                     }
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    // Language Mode Chips
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(
-                            "AUTO" to "Auto (EN + বাংলা)",
-                            "BN" to "বাংলা",
-                            "EN" to "English"
+                            "AUTO" to "বাংলা + EN",
+                            "BN" to "শুধু বাংলা",
+                            "EN" to "শুধু English"
                         ).forEach { (code, label) ->
                             val selected = settings.languageMode == code
                             Surface(
                                 color = if (selected) StudioGoldLight else StudioGlassFill,
-                                shape = RoundedCornerShape(50),
+                                shape = RoundedCornerShape(8.dp),
                                 border = BorderStroke(1.dp, if (selected) StudioGoldLight else StudioGlassBorder),
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable { onUpdateLanguageMode(code) }
                             ) {
                                 Text(
                                     text = label,
                                     style = MaterialTheme.typography.labelMedium,
                                     color = if (selected) JarvisObsidian else JarvisIceWhite,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
-                        text = "রিয়েল মানুষের ভয়েস (৩টি পুরুষ 👨 ও ৩টি নারী 👩):",
+                        text = "ভয়েস সিলেক্ট করুন (৩টি পুরুষ 👨 ও ৩টি নারী 👩):",
                         style = MaterialTheme.typography.bodyMedium,
                         color = JarvisIceWhite,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.SemiBold
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -1005,18 +1002,16 @@ fun SystemStatusScreen(
                     ) {
                         REAL_VOICE_PERSONAS.forEach { persona ->
                             val selected = settings.selectedVoicePersonaId == persona.id
-                            val isFemale = persona.gender == VoiceGender.FEMALE
-                            val emoji = if (isFemale) "👩" else "👨"
-                            val accent = if (isFemale) StudioGoldLight else JarvisCyan
+                            val emoji = if (persona.gender == VoiceGender.FEMALE) "👩" else "👨"
                             Surface(
-                                color = if (selected) accent.copy(alpha = 0.24f) else StudioGlassFill,
-                                shape = RoundedCornerShape(16.dp),
+                                color = if (selected) StudioGoldLight else StudioGlassFill,
+                                shape = RoundedCornerShape(8.dp),
                                 border = BorderStroke(
-                                    width = if (selected) 1.5.dp else 1.dp,
-                                    color = if (selected) accent else StudioGlassBorder
+                                    width = 1.dp,
+                                    color = if (selected) StudioGoldLight else StudioGlassBorder
                                 ),
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(16.dp))
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable { onSelectVoicePersona(persona.id) }
                                     .testTag("settings_voice_persona_${persona.id}")
                             ) {
@@ -1026,13 +1021,13 @@ fun SystemStatusScreen(
                                     Text(
                                         text = "$emoji ${persona.nameBn}",
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = JarvisIceWhite,
+                                        color = if (selected) JarvisObsidian else JarvisIceWhite,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
                                         text = persona.subtitleBn,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = if (selected) accent else StudioSubtleText
+                                        color = if (selected) JarvisObsidian else StudioSubtleText
                                     )
                                 }
                             }
@@ -1041,6 +1036,7 @@ fun SystemStatusScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    // Switch 1: Continuous Background Mic
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1048,13 +1044,13 @@ fun SystemStatusScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "নন-স্টপ ব্যাকগ্রাউন্ড মাইক (Continuous Mic)",
+                                text = "নন-স্টপ ব্যাকগ্রাউন্ড মাইক",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = JarvisIceWhite,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "একবার মাইক চালু করলে কথা শুনবে, উত্তর দেবে এবং মাঝখানে মাইক বন্ধ হবে না।",
+                                text = "JARVIS কথা বলার মাঝেও আপনার কথা শুনবে, মাইক বন্ধ হবে না।",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = JarvisEmerald
                             )
@@ -1067,8 +1063,9 @@ fun SystemStatusScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
+                    // Switch 2: Auto-Speak Replies
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1076,13 +1073,13 @@ fun SystemStatusScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Auto-Speak Replies",
+                                text = "মুখে উত্তর বলবে (Auto-Speak)",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = JarvisIceWhite,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "Speaks replies automatically in বাংলা & English.",
+                                text = "বাংলা ও ইংরেজিতে অটোমেটিক ভয়েসে উত্তর দেবে।",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = StudioSubtleText
                             )
@@ -1094,8 +1091,9 @@ fun SystemStatusScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
+                    // Switch 3: Wake Word
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1109,7 +1107,7 @@ fun SystemStatusScreen(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "Triggers AI listening mode when you say \"Hey JARVIS\" or \"হেই জারভিস\".",
+                                text = "\"Hey JARVIS\" বা \"হেই জারভিস\" বললে সাথে সাথে কথা শুনবে।",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = StudioSubtleText
                             )
@@ -1125,47 +1123,47 @@ fun SystemStatusScreen(
             }
         }
 
-        // 3. SIMPLE ANDROID PERMISSIONS CARD
+        // 3. SIMPLE ANDROID SYSTEM PERMISSIONS CARD
         item {
             Surface(
                 color = StudioDarkCard,
-                shape = RoundedCornerShape(26.dp),
+                shape = RoundedCornerShape(14.dp),
                 border = BorderStroke(1.dp, StudioDarkCardBorder),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Security, contentDescription = null, tint = StudioGoldLight)
+                        Icon(Icons.Filled.Security, contentDescription = null, tint = StudioGoldLight, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Phone Permissions",
+                            text = "৩. ফোন পারমিশন",
                             style = MaterialTheme.typography.titleMedium,
                             color = JarvisIceWhite,
                             fontWeight = FontWeight.Bold
                         )
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     PermissionStatusRow(
-                        name = "Microphone (Voice Chat)",
+                        name = "মাইক্রোফোন (Microphone)",
                         granted = telemetry.hasMicPermission,
                         actionLabel = "Allow",
                         onAction = onRequestMicPermission
                     )
                     PermissionStatusRow(
-                        name = "Camera & Flashlight",
+                        name = "ক্যামেরা ও ফ্ল্যাশলাইট",
                         granted = telemetry.hasCameraPermission,
                         actionLabel = "Allow",
                         onAction = onRequestCameraPermission
                     )
                     PermissionStatusRow(
-                        name = "Notification Reader",
+                        name = "নোটিফিকেশন রিডার",
                         granted = telemetry.hasNotificationListenerAccess,
                         actionLabel = "Allow",
                         onAction = { onOpenSettingsSection("notification_access") }
                     )
                     PermissionStatusRow(
-                        name = "Screen Brightness Control",
+                        name = "স্ক্রিন ব্রাইটনেস কন্ট্রোল",
                         granted = telemetry.hasWriteSettingsAccess,
                         actionLabel = "Allow",
                         onAction = { onOpenSettingsSection("write_settings") }
@@ -1209,7 +1207,7 @@ private fun PermissionStatusRow(
         }
         if (granted) {
             Text(
-                text = "GRANTED",
+                text = "চালু আছে",
                 style = MaterialTheme.typography.labelSmall,
                 color = JarvisEmerald,
                 fontWeight = FontWeight.Bold
@@ -1218,6 +1216,7 @@ private fun PermissionStatusRow(
             OutlinedButton(
                 onClick = onAction,
                 border = BorderStroke(1.dp, JarvisCyan),
+                shape = RoundedCornerShape(8.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 Text(actionLabel, color = JarvisCyan, style = MaterialTheme.typography.labelSmall)
@@ -1225,3 +1224,4 @@ private fun PermissionStatusRow(
         }
     }
 }
+

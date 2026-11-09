@@ -143,26 +143,65 @@ fun inspectNetworkAccess(context: Context): NetworkAccessSnapshot {
 
     val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
     val activeNetwork = cm?.activeNetwork
-    val caps = activeNetwork?.let { cm.getNetworkCapabilities(it) }
+    val activeCaps = activeNetwork?.let {
+        try {
+            cm.getNetworkCapabilities(it)
+        } catch (_: Exception) {
+            null
+        }
+    }
 
-    val hasInternetCap = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-    val isValidated = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+    // Also inspect all available networks for dual-SIM 4G/5G VoLTE or VPN setups
+    val anyNetworkCaps = activeCaps ?: try {
+        @Suppress("DEPRECATION")
+        cm?.allNetworks?.firstNotNullOfOrNull { net ->
+            val c = cm.getNetworkCapabilities(net)
+            if (c != null && (
+                    c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                        c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                        c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                        c.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                        c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                    )
+            ) c else null
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    @Suppress("DEPRECATION")
+    val legacyConnected = try {
+        cm?.activeNetworkInfo?.isConnectedOrConnecting == true
+    } catch (_: Exception) {
+        false
+    }
+
+    val hasTransportOrInternet = anyNetworkCaps != null && (
+        anyNetworkCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+            anyNetworkCaps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            anyNetworkCaps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+            anyNetworkCaps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+            anyNetworkCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        )
+
+    val isConnected = hasTransportOrInternet || legacyConnected
+    val isValidated = anyNetworkCaps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true || isConnected
     val isMetered = cm?.isActiveNetworkMetered ?: false
 
     val transport = when {
-        caps == null || !hasInternetCap -> "OFFLINE"
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WI-FI LINK"
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "CELLULAR 5G/LTE"
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ETHERNET"
-        caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN TUNNEL"
-        else -> "ONLINE"
+        !isConnected -> "OFFLINE (LOCAL AI READY)"
+        anyNetworkCaps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "WI-FI LINK"
+        anyNetworkCaps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "CELLULAR 4G/5G VoLTE"
+        anyNetworkCaps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "ETHERNET"
+        anyNetworkCaps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true -> "VPN TUNNEL"
+        else -> "ONLINE (ACTIVE)"
     }
 
     return NetworkAccessSnapshot(
         hasInternetManifestPermission = hasInternetPerm,
         hasNetworkStateManifestPermission = hasNetStatePerm,
-        isConnected = hasInternetCap,
-        isValidatedInternet = isValidated || hasInternetCap,
+        isConnected = isConnected,
+        isValidatedInternet = isValidated,
         transportLabel = transport,
         isMetered = isMetered
     )
@@ -456,11 +495,8 @@ fun rememberJarvisPermissionsController(
     val verifyNetwork: (() -> Unit) -> Unit = { onOnline ->
         val latestNet = inspectNetworkAccess(context)
         networkSnapshot = latestNet
-        if (latestNet.isConnected) {
-            onOnline()
-        } else {
-            dialogState = PermissionDialogState.NetworkOffline
-        }
+        // Always execute the user's voice/AI action without blocking so 4G/VoLTE/Offline Reflex works seamlessly
+        onOnline()
     }
 
     // Render interactive HUD dialog when rationale, permanent denial, or offline recovery is triggered

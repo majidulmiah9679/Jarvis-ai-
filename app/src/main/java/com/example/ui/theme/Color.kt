@@ -2,43 +2,43 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// New Clean Modern "Ocean Cyber & Deep Slate" Default Palette
-val JarvisObsidian = Color(0xFF060D18)
-val JarvisDeepNavy = Color(0xFF0B172A)
-val JarvisSurfaceCard = Color(0xFF101F36)
-val JarvisSurfaceElevated = Color(0xFF162A47)
+// Clean, Simple Native Android System (Material 3 Dark) Palette
+val JarvisObsidian = Color(0xFF111318)
+val JarvisDeepNavy = Color(0xFF16181E)
+val JarvisSurfaceCard = Color(0xFF1D2026)
+val JarvisSurfaceElevated = Color(0xFF252932)
 
-// Crisp Modern Background Gradient Tokens (Replacing the old peach/purple background)
-val AuroraPeachTop = Color(0xFF0A2239)
-val AuroraRoseMid = Color(0xFF081B31)
-val AuroraVioletDeep = Color(0xFF071526)
-val AuroraDarkPlum = Color(0xFF06101E)
-val AuroraObsidianBottom = Color(0xFF040912)
+// Clean Flat Android System Background Tokens
+val AuroraPeachTop = Color(0xFF111318)
+val AuroraRoseMid = Color(0xFF111318)
+val AuroraVioletDeep = Color(0xFF111318)
+val AuroraDarkPlum = Color(0xFF111318)
+val AuroraObsidianBottom = Color(0xFF111318)
 
-// Modern Cyan-Emerald & Sky Accent Tokens
-val StudioGoldLight = Color(0xFF38BDF8)
-val StudioGoldWarm = Color(0xFF0EA5E9)
-val StudioVioletAccent = Color(0xFF10B981)
-val StudioPurpleVibrant = Color(0xFF0284C7)
-val StudioMagentaGlow = Color(0xFF06B6D4)
+// Clean Android System Accent Tokens (Google Pixel / Material 3 Blue & Green)
+val StudioGoldLight = Color(0xFF8AB4F8)
+val StudioGoldWarm = Color(0xFF669DF6)
+val StudioVioletAccent = Color(0xFF81C995)
+val StudioPurpleVibrant = Color(0xFF4285F4)
+val StudioMagentaGlow = Color(0xFF8AB4F8)
 
-// Clean Frosted Glass & Card Tokens
-val StudioGlassFill = Color(0x22FFFFFF)
-val StudioGlassBorder = Color(0x33FFFFFF)
-val StudioDarkCard = Color(0xFF0F1D32)
-val StudioDarkCardBorder = Color(0xFF1E3557)
-val StudioSubtleText = Color(0xFF94A3B8)
+// Clean Material 3 Card & Divider Tokens
+val StudioGlassFill = Color(0xFF252932)
+val StudioGlassBorder = Color(0xFF333842)
+val StudioDarkCard = Color(0xFF1C1F26)
+val StudioDarkCardBorder = Color(0xFF2D323C)
+val StudioSubtleText = Color(0xFF9AA0A6)
 
-val JarvisCyan = Color(0xFF00E5FF)
-val JarvisCyanDim = Color(0xFF0284C7)
-val JarvisElectricBlue = Color(0xFF3B82F6)
-val JarvisIceWhite = Color(0xFFF8FAFC)
-val JarvisMutedCyan = Color(0xFF94A3B8)
+val JarvisCyan = Color(0xFF8AB4F8)
+val JarvisCyanDim = Color(0xFF5F6368)
+val JarvisElectricBlue = Color(0xFF4285F4)
+val JarvisIceWhite = Color(0xFFE8EAED)
+val JarvisMutedCyan = Color(0xFF9AA0A6)
 
-val JarvisEmerald = Color(0xFF10B981)
-val JarvisAmber = Color(0xFFF59E0B)
-val JarvisCrimson = Color(0xFFF43F5E)
-val JarvisViolet = Color(0xFF6366F1)
+val JarvisEmerald = Color(0xFF81C995)
+val JarvisAmber = Color(0xFFFDD663)
+val JarvisCrimson = Color(0xFFF28B82)
+val JarvisViolet = Color(0xFFC58AF9)
 
 enum class JarvisVisualTheme(
     val id: String,
@@ -54,50 +54,50 @@ enum class JarvisVisualTheme(
 ) {
     OCEAN_CYBER(
         id = "OCEAN_CYBER",
-        titleBn = "সায়ান ব্লু",
-        titleEn = "Ocean Cyber",
-        topBg = Color(0xFF0B2545),
-        midBg = Color(0xFF08182F),
-        bottomBg = Color(0xFF040B16),
-        cardBg = Color(0xFF0F213A),
-        cardBorder = Color(0xFF1E3A63),
-        primaryAccent = Color(0xFF00E5FF),
-        secondaryAccent = Color(0xFF10B981)
+        titleBn = "অ্যান্ড্রয়েড ব্লু",
+        titleEn = "Android Blue",
+        topBg = Color(0xFF111318),
+        midBg = Color(0xFF111318),
+        bottomBg = Color(0xFF111318),
+        cardBg = Color(0xFF1C1F26),
+        cardBorder = Color(0xFF2D323C),
+        primaryAccent = Color(0xFF8AB4F8),
+        secondaryAccent = Color(0xFF81C995)
     ),
     EMERALD_MATRIX(
         id = "EMERALD_MATRIX",
-        titleBn = "এমেরাল্ড গ্রিন",
-        titleEn = "Emerald Neo",
-        topBg = Color(0xFF062C21),
-        midBg = Color(0xFF051C15),
-        bottomBg = Color(0xFF020E0A),
-        cardBg = Color(0xFF0A261D),
-        cardBorder = Color(0xFF164B3A),
-        primaryAccent = Color(0xFF10B981),
-        secondaryAccent = Color(0xFF34D399)
+        titleBn = "সিস্টেম গ্রিন",
+        titleEn = "System Green",
+        topBg = Color(0xFF101412),
+        midBg = Color(0xFF101412),
+        bottomBg = Color(0xFF101412),
+        cardBg = Color(0xFF1A211E),
+        cardBorder = Color(0xFF2B3731),
+        primaryAccent = Color(0xFF81C995),
+        secondaryAccent = Color(0xFFA8DAB5)
     ),
     ROYAL_INDIGO(
         id = "ROYAL_INDIGO",
-        titleBn = "রয়্যাল নীল",
-        titleEn = "Royal Indigo",
-        topBg = Color(0xFF17153B),
-        midBg = Color(0xFF0E0D26),
-        bottomBg = Color(0xFF070614),
-        cardBg = Color(0xFF151433),
-        cardBorder = Color(0xFF2B2963),
-        primaryAccent = Color(0xFF818CF8),
-        secondaryAccent = Color(0xFF38BDF8)
+        titleBn = "ম্যাটেরিয়াল পার্পল",
+        titleEn = "Material Purple",
+        topBg = Color(0xFF131218),
+        midBg = Color(0xFF131218),
+        bottomBg = Color(0xFF131218),
+        cardBg = Color(0xFF1E1C26),
+        cardBorder = Color(0xFF322F3E),
+        primaryAccent = Color(0xFFD0BCFF),
+        secondaryAccent = Color(0xFFCCC2DC)
     ),
     SUNSET_GOLD(
         id = "SUNSET_GOLD",
-        titleBn = "গোল্ডেন ডার্ক",
-        titleEn = "Gold Onyx",
-        topBg = Color(0xFF2A1810),
-        midBg = Color(0xFF180E0A),
-        bottomBg = Color(0xFF0C0705),
-        cardBg = Color(0xFF23150E),
-        cardBorder = Color(0xFF4A2C1D),
-        primaryAccent = Color(0xFFFBBF24),
-        secondaryAccent = Color(0xFFF97316)
+        titleBn = "সিম্পল ডার্ক",
+        titleEn = "Simple Dark",
+        topBg = Color(0xFF0E0E0E),
+        midBg = Color(0xFF0E0E0E),
+        bottomBg = Color(0xFF0E0E0E),
+        cardBg = Color(0xFF1A1A1A),
+        cardBorder = Color(0xFF2E2E2E),
+        primaryAccent = Color(0xFFE8EAED),
+        secondaryAccent = Color(0xFF8AB4F8)
     )
 }
