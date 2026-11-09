@@ -134,6 +134,130 @@ class JarvisBrainService {
         }
     }
 
+    /**
+     * Direct live validation probe to test an API key or token.
+     * Returns Result.success(details) if the key works, or Result.failure(exception) if invalid/expired.
+     */
+    suspend fun testApiKeyOrToken(
+        apiKey: String,
+        providerMode: String = "AUTO",
+        customModel: String = "",
+        customBaseUrl: String = ""
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val cleanKey = apiKey.trim().removePrefix("Bearer ").trim()
+        if (cleanKey.isBlank()) {
+            return@withContext Result.failure(Exception("API Key / Token cannot be empty."))
+        }
+
+        val mode = providerMode.uppercase()
+        val isGemini = mode == "GEMINI" || (mode == "AUTO" && cleanKey.startsWith("AIza"))
+        val isGroq = mode == "GROQ" || (mode == "AUTO" && cleanKey.startsWith("gsk_"))
+        val isOpenRouter = mode == "OPENROUTER" || (mode == "AUTO" && cleanKey.startsWith("sk-or-"))
+        val isOpenAi = mode == "OPENAI" || (mode == "AUTO" && cleanKey.startsWith("sk-"))
+
+        if (isGemini) {
+            val candidateModels = buildList {
+                if (customModel.isNotBlank()) add(customModel.trim())
+                add("gemini-2.5-flash")
+                add("gemini-2.0-flash")
+                add("gemini-2.5-flash-lite")
+                add("gemini-1.5-flash")
+                add("gemini-1.5-pro")
+            }.distinct()
+
+            var lastErr: Exception? = null
+            for (model in candidateModels) {
+                try {
+                    val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$cleanKey"
+                    val requestBody = JSONObject().apply {
+                        put(
+                            "contents",
+                            JSONArray().put(
+                                JSONObject().put(
+                                    "parts",
+                                    JSONArray().put(JSONObject().put("text", "Respond with 'JARVIS_ONLINE'"))
+                                )
+                            )
+                        )
+                    }
+                    val request = Request.Builder()
+                        .url(url)
+                        .addHeader("Content-Type", "application/json")
+                        .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+                        .build()
+
+                    val response = okHttpClient.newCall(request).execute()
+                    val code = response.code
+                    val body = response.body?.string().orEmpty()
+                    response.close()
+
+                    if (response.isSuccessful) {
+                        return@withContext Result.success("Gemini API Key Verified Successfully ($model) • Status 200 OK")
+                    } else {
+                        val parsedMessage = try {
+                            JSONObject(body).optJSONObject("error")?.optString("message") ?: body.take(90)
+                        } catch (_: Exception) {
+                            body.take(90)
+                        }
+                        lastErr = Exception("Gemini ($model) HTTP $code: $parsedMessage")
+                    }
+                } catch (e: Exception) {
+                    lastErr = e
+                }
+            }
+            return@withContext Result.failure(lastErr ?: Exception("Gemini verification failed."))
+        }
+
+        // OpenAI, Groq, OpenRouter or Generic Bearer token probe
+        val endpoint = when {
+            isGroq -> "https://api.groq.com/openai/v1/chat/completions"
+            isOpenRouter -> "https://openrouter.ai/api/v1/chat/completions"
+            customBaseUrl.isNotBlank() -> customBaseUrl.trim()
+            else -> "https://api.openai.com/v1/chat/completions"
+        }
+        val model = when {
+            customModel.isNotBlank() -> customModel.trim()
+            isGroq -> "llama-3.3-70b-versatile"
+            isOpenRouter -> "google/gemini-2.5-flash"
+            else -> "gpt-4o-mini"
+        }
+
+        try {
+            val payload = JSONObject().apply {
+                put("model", model)
+                put("messages", JSONArray().put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", "ping")
+                }))
+                put("max_tokens", 10)
+            }
+            val request = Request.Builder()
+                .url(endpoint)
+                .addHeader("Authorization", "Bearer $cleanKey")
+                .addHeader("Content-Type", "application/json")
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = okHttpClient.newCall(request).execute()
+            val code = response.code
+            val body = response.body?.string().orEmpty()
+            response.close()
+
+            if (response.isSuccessful) {
+                Result.success("Token Verified Successfully ($model) • Status 200 OK")
+            } else {
+                val parsedMessage = try {
+                    JSONObject(body).optJSONObject("error")?.optString("message") ?: body.take(90)
+                } catch (_: Exception) {
+                    body.take(90)
+                }
+                Result.failure(Exception("HTTP $code: $parsedMessage"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun processCommand(
         userPrompt: String,
         recentHistory: List<ChatMessageEntity>,
@@ -348,7 +472,9 @@ class JarvisBrainService {
             if (customModel.isNotBlank()) add(customModel.trim())
             add("gemini-2.5-flash")
             add("gemini-2.0-flash")
+            add("gemini-2.5-flash-lite")
             add("gemini-1.5-flash")
+            add("gemini-1.5-pro")
         }.distinct()
 
         var lastError: Exception? = null
@@ -540,49 +666,73 @@ class JarvisBrainService {
         providerUsed: String,
         defaultLanguageCode: String = "en"
     ): JarvisBrainDecision {
-        val json = JSONObject(rawJson)
-        val spokenReply = json.optString("spokenReply", "At your service, $bossTitle.")
-        val detailedText = json.optString("detailedText", "")
-        val replyDetection = LanguageDetectionHelper.detectUserLanguage(
-            inputText = spokenReply,
-            preferredLanguageMode = defaultLanguageCode,
-            bossTitle = bossTitle
-        )
-        val rawLang = json.optString("detectedLanguage", defaultLanguageCode)
-        val detectedLang = if (replyDetection.isBangla || rawLang.equals("bn", ignoreCase = true)) {
-            "bn"
-        } else {
-            "en"
-        }
-        val actionName = json.optString("actionName", "none")
-        val actionTarget = json.optString("actionTarget", "")
-        val actionSecondary = json.optString("actionSecondary", "")
-
-        val suggestionsArray = json.optJSONArray("followUpSuggestions")
-        val suggestions = mutableListOf<String>()
-        if (suggestionsArray != null) {
-            for (i in 0 until suggestionsArray.length()) {
-                val item = suggestionsArray.optString(i).trim()
-                if (item.isNotBlank()) suggestions.add(item)
+        return try {
+            val json = JSONObject(rawJson)
+            val spokenReply = json.optString("spokenReply", "At your service, $bossTitle.")
+            val detailedText = json.optString("detailedText", "")
+            val replyDetection = LanguageDetectionHelper.detectUserLanguage(
+                inputText = spokenReply,
+                preferredLanguageMode = defaultLanguageCode,
+                bossTitle = bossTitle
+            )
+            val rawLang = json.optString("detectedLanguage", defaultLanguageCode)
+            val detectedLang = if (replyDetection.isBangla || rawLang.equals("bn", ignoreCase = true)) {
+                "bn"
+            } else {
+                "en"
             }
-        }
+            val actionName = json.optString("actionName", "none")
+            val actionTarget = json.optString("actionTarget", "")
+            val actionSecondary = json.optString("actionSecondary", "")
 
-        return JarvisBrainDecision(
-            spokenReply = spokenReply,
-            detailedText = detailedText,
-            detectedLanguage = detectedLang,
-            actionName = actionName,
-            actionTarget = actionTarget,
-            actionSecondary = actionSecondary,
-            followUpSuggestions = suggestions.ifEmpty {
-                if (detectedLang == "bn") {
+            val suggestionsArray = json.optJSONArray("followUpSuggestions")
+            val suggestions = mutableListOf<String>()
+            if (suggestionsArray != null) {
+                for (i in 0 until suggestionsArray.length()) {
+                    val item = suggestionsArray.optString(i).trim()
+                    if (item.isNotBlank()) suggestions.add(item)
+                }
+            }
+
+            JarvisBrainDecision(
+                spokenReply = spokenReply,
+                detailedText = detailedText,
+                detectedLanguage = detectedLang,
+                actionName = actionName,
+                actionTarget = actionTarget,
+                actionSecondary = actionSecondary,
+                followUpSuggestions = suggestions.ifEmpty {
+                    if (detectedLang == "bn") {
+                        listOf("🔦 ফ্ল্যাশলাইট চালু করো", "🔋 ব্যাটারি কত?", "📷 ক্যামেরা ওপেন করো")
+                    } else {
+                        listOf("Turn on flashlight", "Battery status", "Open Camera")
+                    }
+                },
+                providerUsed = providerUsed
+            )
+        } catch (_: Exception) {
+            val plainReply = rawJson.trim().ifBlank { "At your service, $bossTitle." }
+            val replyDetection = LanguageDetectionHelper.detectUserLanguage(
+                inputText = plainReply,
+                preferredLanguageMode = defaultLanguageCode,
+                bossTitle = bossTitle
+            )
+            val detectedLang = if (replyDetection.isBangla) "bn" else "en"
+            JarvisBrainDecision(
+                spokenReply = plainReply.take(400),
+                detailedText = if (plainReply.length > 400) plainReply else "",
+                detectedLanguage = detectedLang,
+                actionName = "none",
+                actionTarget = "",
+                actionSecondary = "",
+                followUpSuggestions = if (detectedLang == "bn") {
                     listOf("🔦 ফ্ল্যাশলাইট চালু করো", "🔋 ব্যাটারি কত?", "📷 ক্যামেরা ওপেন করো")
                 } else {
                     listOf("Turn on flashlight", "Battery status", "Open Camera")
-                }
-            },
-            providerUsed = providerUsed
-        )
+                },
+                providerUsed = providerUsed
+            )
+        }
     }
 
     private fun executeLocalSmartFallback(

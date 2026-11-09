@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NorthEast
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Stop
@@ -81,6 +82,9 @@ import com.example.actions.PendingConfirmationAction
 import com.example.ai.JarvisBrainService
 import com.example.data.ChatMessageEntity
 import com.example.data.JarvisSettings
+import com.example.data.REAL_VOICE_PERSONAS
+import com.example.data.VoiceGender
+import com.example.data.findVoicePersonaById
 import com.example.ui.components.JarvisIridescentVoiceOrb
 import com.example.ui.theme.JarvisCrimson
 import com.example.ui.theme.JarvisCyan
@@ -134,6 +138,8 @@ fun CoreHudScreen(
     onStartListenAndSpeakFeature: () -> Unit = {},
     onToggleLiveConversation: (Boolean) -> Unit = {},
     onToggleWakeWord: (Boolean) -> Unit = {},
+    onSelectVoicePersona: (String) -> Unit = {},
+    onToggleContinuousBackgroundMic: (Boolean) -> Unit = {},
     onOpenDeviceControlTab: () -> Unit = {},
     onMicClick: () -> Unit,
     onRequestMicPermission: () -> Unit,
@@ -167,7 +173,6 @@ fun CoreHudScreen(
             followUpSuggestions = followUpSuggestions,
             errorBanner = errorBanner,
             onBackToHome = {
-                onToggleLiveConversation(false)
                 onToggleVoiceChatMode(false)
             },
             onOpenSettings = onOpenQuickSettingsTab,
@@ -176,6 +181,8 @@ fun CoreHudScreen(
             onStartListenAndSpeakFeature = onStartListenAndSpeakFeature,
             onToggleLiveConversation = onToggleLiveConversation,
             onToggleWakeWord = onToggleWakeWord,
+            onSelectVoicePersona = onSelectVoicePersona,
+            onToggleContinuousBackgroundMic = onToggleContinuousBackgroundMic,
             onStopSpeaking = onStopSpeaking,
             onSendCommand = onSendCommand,
             onSpeakMessage = onSpeakMessage,
@@ -213,8 +220,10 @@ fun CoreHudScreen(
             onStartListenAndSpeakFeature = {
                 onStartListenAndSpeakFeature()
             },
-            onStopVoice = onStopSpeaking,
+            onStopVoice = onMicClick,
             onToggleWakeWord = onToggleWakeWord,
+            onSelectVoicePersona = onSelectVoicePersona,
+            onToggleContinuousBackgroundMic = onToggleContinuousBackgroundMic,
             onOpenDeviceControl = onOpenDeviceControlTab,
             onOpenSettings = onOpenQuickSettingsTab,
             onRequestMicPermission = onRequestMicPermission,
@@ -261,6 +270,8 @@ private fun StudioHomeDashboard(
     onStartListenAndSpeakFeature: () -> Unit,
     onStopVoice: () -> Unit,
     onToggleWakeWord: (Boolean) -> Unit,
+    onSelectVoicePersona: (String) -> Unit,
+    onToggleContinuousBackgroundMic: (Boolean) -> Unit,
     onOpenDeviceControl: () -> Unit,
     onOpenSettings: () -> Unit,
     onRequestMicPermission: () -> Unit,
@@ -685,6 +696,145 @@ private fun StudioHomeDashboard(
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Continuous Background Mic Status Bar
+                    Surface(
+                        color = if (settings.continuousBackgroundMic) {
+                            JarvisEmerald.copy(alpha = 0.16f)
+                        } else {
+                            Color.White.copy(alpha = 0.05f)
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (settings.continuousBackgroundMic) JarvisEmerald.copy(alpha = 0.6f) else visualTheme.cardBorder
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable { onToggleContinuousBackgroundMic(!settings.continuousBackgroundMic) }
+                            .testTag("home_continuous_mic_toggle")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(9.dp)
+                                        .clip(CircleShape)
+                                        .background(if (settings.continuousBackgroundMic) JarvisEmerald else StudioSubtleText)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (settings.continuousBackgroundMic) {
+                                        "নন-স্টপ ব্যাকগ্রাউন্ড মাইক: ON (মাঝখানে বন্ধ হবে না)"
+                                    } else {
+                                        "নন-স্টপ ব্যাকগ্রাউন্ড মাইক: OFF (ট্যাপ করে চালু করুন)"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (settings.continuousBackgroundMic) JarvisEmerald else StudioSubtleText,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // 6 REAL HUMAN VOICES (3 MALE 👨 + 3 FEMALE 👩) 1-TAP SELECTOR STRIP
+                    val activePersona = findVoicePersonaById(settings.selectedVoicePersonaId)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Filled.RecordVoiceOver,
+                                contentDescription = null,
+                                tint = visualTheme.primaryAccent,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "রিয়েল মানুষের ভয়েস (Male / Female):",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = JarvisIceWhite,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Text(
+                            text = activePersona.nameBn,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = visualTheme.primaryAccent,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        REAL_VOICE_PERSONAS.forEach { persona ->
+                            val isSelected = persona.id == settings.selectedVoicePersonaId
+                            val genderEmoji = if (persona.gender == VoiceGender.FEMALE) "👩" else "👨"
+                            val accent = if (persona.gender == VoiceGender.FEMALE) {
+                                visualTheme.secondaryAccent
+                            } else {
+                                visualTheme.primaryAccent
+                            }
+                            Surface(
+                                color = if (isSelected) accent.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.05f),
+                                shape = RoundedCornerShape(16.dp),
+                                border = BorderStroke(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) accent else visualTheme.cardBorder
+                                ),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .clickable { onSelectVoicePersona(persona.id) }
+                                    .testTag("home_voice_persona_${persona.id}")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = genderEmoji,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Column {
+                                        Text(
+                                            text = persona.nameBn,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = if (isSelected) JarvisIceWhite else StudioSubtleText,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = persona.subtitleBn,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (isSelected) accent else StudioSubtleText.copy(alpha = 0.75f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -886,6 +1036,8 @@ private fun SmartVoiceAssistantScreen(
     onStartListenAndSpeakFeature: () -> Unit,
     onToggleLiveConversation: (Boolean) -> Unit,
     onToggleWakeWord: (Boolean) -> Unit,
+    onSelectVoicePersona: (String) -> Unit,
+    onToggleContinuousBackgroundMic: (Boolean) -> Unit,
     onStopSpeaking: () -> Unit,
     onSendCommand: (String) -> Unit,
     onSpeakMessage: (String, String) -> Unit,
@@ -1184,7 +1336,48 @@ private fun SmartVoiceAssistantScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // 3B. 6 Real Male & Female Voice Persona Selector Row inside Live Voice Screen
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            REAL_VOICE_PERSONAS.forEach { persona ->
+                val isSelected = persona.id == settings.selectedVoicePersonaId
+                val genderEmoji = if (persona.gender == VoiceGender.FEMALE) "👩" else "👨"
+                val accentColor = if (persona.gender == VoiceGender.FEMALE) StudioGoldLight else JarvisCyan
+                Surface(
+                    color = if (isSelected) accentColor.copy(alpha = 0.24f) else StudioGlassFill,
+                    shape = RoundedCornerShape(50),
+                    border = BorderStroke(
+                        width = if (isSelected) 1.5.dp else 1.dp,
+                        color = if (isSelected) accentColor else StudioGlassBorder
+                    ),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable { onSelectVoicePersona(persona.id) }
+                        .testTag("voice_chat_persona_${persona.id}")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "$genderEmoji ${persona.nameBn}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (isSelected) JarvisIceWhite else StudioSubtleText,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         // 4. Big Centered Heading: "Smart Voice Assistant" (Fixed 2-line height so layout never jumps)
         Box(
@@ -1515,8 +1708,10 @@ private fun SmartVoiceAssistantScreen(
                 contentDescription = "Stop or Exit Voice Chat",
                 sizeDp = 54,
                 onClick = {
-                    if (hudState == VoiceHudState.SPEAKING || hudState == VoiceHudState.LISTENING) {
+                    if (hudState == VoiceHudState.SPEAKING) {
                         onStopSpeaking()
+                    } else if (hudState == VoiceHudState.LISTENING) {
+                        onMicClick()
                     } else {
                         onBackToHome()
                     }

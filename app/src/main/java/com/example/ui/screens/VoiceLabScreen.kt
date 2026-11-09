@@ -40,6 +40,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -52,6 +53,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.data.ELEVENLABS_VOICE_PRESETS
 import com.example.data.JarvisSettings
+import com.example.data.REAL_VOICE_PERSONAS
+import com.example.data.VoiceGender
 import com.example.ui.theme.JarvisAmber
 import com.example.ui.theme.JarvisCrimson
 import com.example.ui.theme.JarvisCyan
@@ -74,6 +77,8 @@ fun VoiceLabScreen(
     hasConfiguredElevenLabsKey: Boolean,
     isForegroundServiceRunning: Boolean,
     onUpdateTtsEngine: (String) -> Unit,
+    onSelectVoicePersona: (String) -> Unit = {},
+    onUpdateContinuousBackgroundMic: (Boolean) -> Unit = {},
     onUpdateElevenLabsVoiceId: (String) -> Unit,
     onUpdateCustomElevenLabsKey: (String) -> Unit,
     onUpdateSpeechRate: (Float) -> Unit,
@@ -94,6 +99,12 @@ fun VoiceLabScreen(
     }
     var customApiKeyInput by rememberSaveable(settings.customElevenLabsKey) {
         mutableStateOf(settings.customElevenLabsKey)
+    }
+    var localSpeechRate by rememberSaveable(settings.speechRate) {
+        mutableFloatStateOf(settings.speechRate)
+    }
+    var localSpeechPitch by rememberSaveable(settings.speechPitch) {
+        mutableFloatStateOf(settings.speechPitch)
     }
     var testSpeechInput by rememberSaveable {
         mutableStateOf("Good evening, Boss. All JARVIS neural and voice systems are online and ready for your command.")
@@ -264,7 +275,159 @@ fun VoiceLabScreen(
             }
         }
 
-        // 2. Voice Engine Selector (Phone Native TTS vs ElevenLabs Neural Voice)
+        // 1B. 6 REAL HUMAN VOICES (3 MALE 👨 & 3 FEMALE 👩) STUDIO SELECTOR
+        item {
+            Surface(
+                color = JarvisSurfaceCard,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.5.dp, JarvisEmerald.copy(alpha = 0.7f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("real_voice_personas_card")
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.RecordVoiceOver, contentDescription = null, tint = JarvisEmerald)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "রিয়েল মানুষের ভয়েস (৩টি পুরুষ 👨 ও ৩টি নারী 👩)",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = JarvisEmerald,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "যেকোনো ভয়েসের ওপর ট্যাপ করলেই সাথে সাথে সেই রিয়েল ভয়েস সেট হবে এবং কথা বলে শোনাবে:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = JarvisMutedCyan
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    REAL_VOICE_PERSONAS.forEach { persona ->
+                        val isSelected = settings.selectedVoicePersonaId == persona.id
+                        val isFemale = persona.gender == VoiceGender.FEMALE
+                        val accentColor = if (isFemale) JarvisAmber else JarvisCyan
+                        val genderBadge = if (isFemale) "👩 FEMALE" else "👨 MALE"
+
+                        Surface(
+                            color = if (isSelected) accentColor.copy(alpha = 0.18f) else JarvisObsidian,
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(
+                                width = if (isSelected) 1.5.dp else 1.dp,
+                                color = if (isSelected) accentColor else accentColor.copy(alpha = 0.3f)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { onSelectVoicePersona(persona.id) }
+                                .testTag("voice_lab_persona_${persona.id}")
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        RadioButton(
+                                            selected = isSelected,
+                                            onClick = { onSelectVoicePersona(persona.id) },
+                                            colors = RadioButtonDefaults.colors(selectedColor = accentColor)
+                                        )
+                                        Column {
+                                            Text(
+                                                text = "${persona.nameBn} • ${persona.nameEn}",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = JarvisIceWhite,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                text = "${persona.subtitleBn} • Pitch ${persona.pitch}x • Speed ${persona.rate}x",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = JarvisMutedCyan
+                                            )
+                                        }
+                                    }
+
+                                    Surface(
+                                        color = accentColor.copy(alpha = 0.2f),
+                                        shape = RoundedCornerShape(50)
+                                    ) {
+                                        Text(
+                                            text = genderBadge,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = accentColor,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            onSelectVoicePersona(persona.id)
+                                            onTestSpeak(persona.sampleGreetingBn, "bn")
+                                        },
+                                        border = BorderStroke(1.dp, JarvisEmerald.copy(alpha = 0.6f)),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.VolumeUp,
+                                            contentDescription = null,
+                                            tint = JarvisEmerald,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("বাংলায় শুনুন", color = JarvisIceWhite, style = MaterialTheme.typography.labelSmall)
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            onSelectVoicePersona(persona.id)
+                                            onTestSpeak(persona.sampleGreetingEn, "en")
+                                        },
+                                        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.6f)),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.VolumeUp,
+                                            contentDescription = null,
+                                            tint = accentColor,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Hear English", color = JarvisIceWhite, style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Voice Engine Selector (Phone Native TTS vs Gemini Native TTS vs ElevenLabs Neural Voice)
         item {
             Surface(
                 color = JarvisSurfaceCard,
@@ -286,15 +449,22 @@ fun VoiceLabScreen(
 
                     EngineOptionRow(
                         selected = settings.ttsEngine == "PHONE_TTS",
-                        title = "Android Phone Native TTS (Zero Latency & Offline Ready)",
-                        subtitle = "Uses built-in Android TextToSpeech with automatic British/US English & বাংলা locale switching.",
+                        title = "Android Multi-Voice Neural TTS (Zero Latency & Offline Ready)",
+                        subtitle = "Uses built-in Android Male & Female voices with natural human pitch/speed & automatic বাংলা/EN switching.",
                         onClick = { onUpdateTtsEngine("PHONE_TTS") }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    EngineOptionRow(
+                        selected = settings.ttsEngine == "GEMINI_TTS",
+                        title = "Gemini 2.5 Native AI Voice (Charon / Aoede / Fenrir / Kore / Puck / Leda)",
+                        subtitle = "Cloud AI human-like voice generation using your Gemini API key with instant Phone TTS fallback.",
+                        onClick = { onUpdateTtsEngine("GEMINI_TTS") }
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     EngineOptionRow(
                         selected = settings.ttsEngine == "ELEVENLABS",
                         title = "ElevenLabs Neural AI Voice (eleven_multilingual_v2)",
-                        subtitle = "Ultra-realistic human-like JARVIS intonation in English & Bangla with automatic Phone TTS fallback.",
+                        subtitle = "Ultra-realistic human-like Male & Female voices in English & Bangla with automatic Phone TTS fallback.",
                         onClick = { onUpdateTtsEngine("ELEVENLABS") }
                     )
                 }
@@ -603,13 +773,14 @@ fun VoiceLabScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Text(
-                        text = "Speech Rate: ${String.format(java.util.Locale.US, "%.2fx", settings.speechRate)}",
+                        text = "Speech Rate: ${String.format(java.util.Locale.US, "%.2fx", localSpeechRate)}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = JarvisIceWhite
                     )
                     Slider(
-                        value = settings.speechRate,
-                        onValueChange = { onUpdateSpeechRate(it) },
+                        value = localSpeechRate,
+                        onValueChange = { localSpeechRate = it },
+                        onValueChangeFinished = { onUpdateSpeechRate(localSpeechRate) },
                         valueRange = 0.6f..1.6f,
                         colors = SliderDefaults.colors(
                             thumbColor = JarvisCyan,
@@ -618,13 +789,14 @@ fun VoiceLabScreen(
                     )
 
                     Text(
-                        text = "Voice Pitch (JARVIS Resonance): ${String.format(java.util.Locale.US, "%.2fx", settings.speechPitch)}",
+                        text = "Voice Pitch (JARVIS Resonance): ${String.format(java.util.Locale.US, "%.2fx", localSpeechPitch)}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = JarvisIceWhite
                     )
                     Slider(
-                        value = settings.speechPitch,
-                        onValueChange = { onUpdateSpeechPitch(it) },
+                        value = localSpeechPitch,
+                        onValueChange = { localSpeechPitch = it },
+                        onValueChangeFinished = { onUpdateSpeechPitch(localSpeechPitch) },
                         valueRange = 0.6f..1.4f,
                         colors = SliderDefaults.colors(
                             thumbColor = JarvisElectricBlue,
@@ -676,6 +848,34 @@ fun VoiceLabScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
+                                text = "নন-স্টপ ব্যাকগ্রাউন্ড মাইক (Continuous Mic Lock)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = JarvisIceWhite,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "একবার মাইক চালু করলে কথা শুনবে, জবাব দেবে এবং মাঝখানে মাইক কখনো বন্ধ হবে না।",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = JarvisEmerald
+                            )
+                        }
+                        Switch(
+                            checked = settings.continuousBackgroundMic,
+                            onCheckedChange = onUpdateContinuousBackgroundMic,
+                            colors = SwitchDefaults.colors(checkedThumbColor = JarvisEmerald),
+                            modifier = Modifier.testTag("continuous_background_mic_switch")
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
                                 text = "Auto-Speak Every JARVIS Reply",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = JarvisIceWhite,
@@ -710,9 +910,9 @@ fun VoiceLabScreen(
                             )
                             Text(
                                 text = if (isForegroundServiceRunning) {
-                                    "ACTIVE: Persistent notification running • Listening after replies."
+                                    "ACTIVE: Silent background service running • Listening after replies."
                                 } else {
-                                    "User-controlled foreground service with persistent mic status notification."
+                                    "Keeps microphone alive smoothly in the background without notification noise."
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (isForegroundServiceRunning) JarvisEmerald else JarvisMutedCyan

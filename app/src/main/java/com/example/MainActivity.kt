@@ -179,7 +179,7 @@ fun JarvisAppRoot(
     }
 
     val handleMicAction: () -> Unit = {
-        if (hudState == VoiceHudState.LISTENING) {
+        if (hudState == VoiceHudState.LISTENING || hudState == VoiceHudState.SPEAKING) {
             jarvisViewModel.stopVoiceListening()
         } else {
             permissionsController.requestMicPermission {
@@ -333,6 +333,18 @@ fun JarvisAppRoot(
                                 onStartListenAndSpeakFeature = handleStartListenAndSpeakFeature,
                                 onToggleLiveConversation = handleToggleLiveConversation,
                                 onToggleWakeWord = handleToggleWakeWord,
+                                onSelectVoicePersona = { personaId ->
+                                    jarvisViewModel.selectVoicePersona(personaId, testSpeakImmediately = true)
+                                },
+                                onToggleContinuousBackgroundMic = { enabled ->
+                                    if (enabled) {
+                                        permissionsController.requestVoiceSuitePermissions {
+                                            jarvisViewModel.updateContinuousBackgroundMic(true)
+                                        }
+                                    } else {
+                                        jarvisViewModel.updateContinuousBackgroundMic(false)
+                                    }
+                                },
                                 onOpenDeviceControlTab = { currentTab = JarvisTab.CONTROL },
                                 onMicClick = handleMicAction,
                                 onRequestMicPermission = {
@@ -387,6 +399,18 @@ fun JarvisAppRoot(
                                 hasConfiguredElevenLabsKey = hasConfiguredElevenLabsKey,
                                 isForegroundServiceRunning = isForegroundServiceRunning,
                                 onUpdateTtsEngine = { jarvisViewModel.updateTtsEngine(it) },
+                                onSelectVoicePersona = { personaId ->
+                                    jarvisViewModel.selectVoicePersona(personaId, testSpeakImmediately = true)
+                                },
+                                onUpdateContinuousBackgroundMic = { enabled ->
+                                    if (enabled) {
+                                        permissionsController.requestVoiceSuitePermissions {
+                                            jarvisViewModel.updateContinuousBackgroundMic(true)
+                                        }
+                                    } else {
+                                        jarvisViewModel.updateContinuousBackgroundMic(false)
+                                    }
+                                },
                                 onUpdateElevenLabsVoiceId = { jarvisViewModel.updateElevenLabsVoiceId(it) },
                                 onUpdateCustomElevenLabsKey = { jarvisViewModel.updateCustomElevenLabsKey(it) },
                                 onUpdateSpeechRate = { jarvisViewModel.updateSpeechRate(it) },
@@ -461,10 +485,25 @@ fun JarvisAppRoot(
                                     jarvisViewModel.updateAutoSpeak(enabled)
                                 },
                                 onUpdateWakeWord = handleToggleWakeWord,
+                                onSelectVoicePersona = { personaId ->
+                                    jarvisViewModel.selectVoicePersona(personaId, testSpeakImmediately = true)
+                                },
+                                onUpdateContinuousBackgroundMic = { enabled ->
+                                    if (enabled) {
+                                        permissionsController.requestVoiceSuitePermissions {
+                                            jarvisViewModel.updateContinuousBackgroundMic(true)
+                                        }
+                                    } else {
+                                        jarvisViewModel.updateContinuousBackgroundMic(false)
+                                    }
+                                },
                                 onTestAiBrain = {
                                     currentTab = JarvisTab.HUD
                                     isVoiceChatMode = true
                                     jarvisViewModel.sendCommand("হ্যালো জারভিস, তোমার এআই ব্রেইন এবং সিস্টেম স্ট্যাটাস জানাও।")
+                                },
+                                onValidateApiKey = { key, mode, model, baseUrl ->
+                                    jarvisViewModel.testApiKeyValidation(key, mode, model, baseUrl)
                                 }
                             )
                         }

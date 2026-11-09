@@ -18,6 +18,7 @@ import com.example.data.JarvisPreferencesRepository
 import com.example.data.JarvisRepository
 import com.example.data.JarvisSettings
 import com.example.data.MemoryEntity
+import com.example.data.findVoicePersonaById
 import com.example.service.JarvisVoiceForegroundService
 import com.example.util.LanguageDetectionResult
 import com.example.voice.JarvisVoiceManager
@@ -261,28 +262,43 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * Feature 1: আমার কথা শুনবে (Listen Only Mode)
-     * Listens to the user's speech, transcribes & processes it silently without speaking over the user.
+     * Listens to the user's speech continuously, transcribes & processes it silently without speaking over the user.
      */
     fun startListenOnlyMode() {
         _errorBanner.value = null
         _voiceFeatureMode.value = VoiceFeatureMode.LISTEN_ONLY
-        voiceManager.setLiveConversationActive(false)
+        val current = settings.value
+        voiceManager.setLiveConversationActive(current.continuousBackgroundMic)
+        if (current.continuousBackgroundMic && _telemetry.value.hasMicPermission) {
+            JarvisVoiceForegroundService.start(
+                getApplication(),
+                "আমার কথা শুনবে • ব্যাকগ্রাউন্ড মাইক সচল আছে"
+            )
+        }
         refreshTelemetryNow()
-        voiceManager.startListening(settings.value.languageMode, wakeWordStandbyOnly = false)
+        voiceManager.startListening(current.languageMode, wakeWordStandbyOnly = false)
     }
 
     /**
      * Feature 2: আমার কথা শুনে কথা বলবে (Listen & Talk Back Mode)
-     * Listens to the user's speech, processes it with AI, and immediately speaks the answer out loud.
+     * Listens continuously, processes with AI, speaks the answer out loud, and automatically resumes listening!
      */
     fun startListenAndSpeakMode() {
         _errorBanner.value = null
         _voiceFeatureMode.value = VoiceFeatureMode.LISTEN_AND_SPEAK
+        val current = settings.value
+        voiceManager.setLiveConversationActive(true)
         viewModelScope.launch {
             preferencesRepository.updateAutoSpeak(true)
         }
+        if (current.continuousBackgroundMic && _telemetry.value.hasMicPermission) {
+            JarvisVoiceForegroundService.start(
+                getApplication(),
+                "কথা শুনে কথা বলবে • অবিরাম ভয়েস ও ব্যাকগ্রাউন্ড মাইক চালু"
+            )
+        }
         refreshTelemetryNow()
-        voiceManager.startListening(settings.value.languageMode, wakeWordStandbyOnly = false)
+        voiceManager.startListening(current.languageMode, wakeWordStandbyOnly = false)
     }
 
     fun selectVoiceFeatureMode(mode: VoiceFeatureMode) {
@@ -296,8 +312,16 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
 
     fun startVoiceListening() {
         _errorBanner.value = null
+        val current = settings.value
+        voiceManager.setLiveConversationActive(true)
+        if (current.continuousBackgroundMic && _telemetry.value.hasMicPermission) {
+            JarvisVoiceForegroundService.start(
+                getApplication(),
+                "অবিরাম মাইক সচল আছে • কথা বলুন, JARVIS শুনছে ও উত্তর দিচ্ছে"
+            )
+        }
         refreshTelemetryNow()
-        voiceManager.startListening(settings.value.languageMode, wakeWordStandbyOnly = false)
+        voiceManager.startListening(current.languageMode, wakeWordStandbyOnly = false)
     }
 
     fun startLiveVoiceGreetingAndListen() {
@@ -306,7 +330,17 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setLiveConversationMode(enabled: Boolean) {
         voiceManager.setLiveConversationActive(enabled)
-        if (!enabled) {
+        if (enabled) {
+            if (_telemetry.value.hasMicPermission) {
+                JarvisVoiceForegroundService.start(
+                    getApplication(),
+                    "লাইভ কথোপকথন ও ব্যাকগ্রাউন্ড মাইক চালু আছে"
+                )
+            }
+        } else {
+            if (!settings.value.handsFreeMode) {
+                JarvisVoiceForegroundService.stop(getApplication())
+            }
             voiceManager.stopListening()
             voiceManager.stopSpeaking()
         }
@@ -315,12 +349,14 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     fun stopVoiceListening() {
         voiceManager.setLiveConversationActive(false)
         voiceManager.stopListening()
+        voiceManager.stopSpeaking()
+        if (!settings.value.handsFreeMode) {
+            JarvisVoiceForegroundService.stop(getApplication())
+        }
     }
 
     fun stopSpeaking() {
-        voiceManager.setLiveConversationActive(false)
         voiceManager.stopSpeaking()
-        voiceManager.stopListening()
     }
 
     fun speakCustomText(text: String, languageHint: String = "en") {
@@ -538,22 +574,22 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                         VoiceFeatureMode.LISTEN_AND_SPEAK -> true
                     }
 
-                    if (shouldSpeakAloud && currentSettings.autoSpeakReplies) {
+                    if (shouldSpeakAloud) {
                         voiceManager.speak(
                             text = decision.spokenReply,
                             languageHint = decision.detectedLanguage,
                             settings = currentSettings,
                             onComplete = {
-                                if (voiceManager.isLiveConversationActive.value || settings.value.handsFreeMode) {
-                                    voiceManager.startListening(settings.value.languageMode)
+                                if (voiceManager.isLiveConversationActive.value ||
+                                    settings.value.continuousBackgroundMic ||
+                                    settings.value.handsFreeMode
+                                ) {
+                                    voiceManager.startListening(
+                                        languageMode = settings.value.languageMode,
+                                        wakeWordStandbyOnly = false
+                                    )
                                 }
                             }
-                        )
-                    } else if (shouldSpeakAloud) {
-                        voiceManager.speak(
-                            text = decision.spokenReply,
-                            languageHint = decision.detectedLanguage,
-                            settings = currentSettings
                         )
                     } else {
                         voiceManager.setIdleState()
@@ -723,6 +759,44 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         preferencesRepository.updateTtsEngine(engine)
     }
 
+    fun selectVoicePersona(personaId: String, testSpeakImmediately: Boolean = true) {
+        viewModelScope.launch {
+            preferencesRepository.updateSelectedVoicePersona(personaId)
+            val persona = findVoicePersonaById(personaId)
+            val updatedSettings = settings.value.copy(
+                selectedVoicePersonaId = persona.id,
+                elevenLabsVoiceId = persona.elevenLabsVoiceId,
+                speechPitch = persona.naturalPitch,
+                speechRate = persona.naturalRate
+            )
+            voiceManager.updateSettings(updatedSettings)
+            if (testSpeakImmediately) {
+                val useEnglish = updatedSettings.languageMode == "EN"
+                val sampleText = if (useEnglish) persona.sampleEnglish else persona.sampleBangla
+                val langHint = if (useEnglish) "en" else "bn"
+                voiceManager.speak(
+                    text = sampleText,
+                    languageHint = langHint,
+                    settings = updatedSettings
+                )
+            }
+        }
+    }
+
+    fun updateContinuousBackgroundMic(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.updateContinuousBackgroundMic(enabled)
+            if (!enabled && !settings.value.handsFreeMode) {
+                JarvisVoiceForegroundService.stop(getApplication())
+            } else if (enabled && hudState.value == VoiceHudState.LISTENING && _telemetry.value.hasMicPermission) {
+                JarvisVoiceForegroundService.start(
+                    getApplication(),
+                    "অবিরাম ব্যাকগ্রাউন্ড মাইক চালু আছে • কথা বলুন"
+                )
+            }
+        }
+    }
+
     fun updateElevenLabsVoiceId(voiceId: String) = viewModelScope.launch {
         preferencesRepository.updateElevenLabsVoiceId(voiceId)
     }
@@ -752,6 +826,20 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             customModelName = customModelName,
             maxTokens = maxTokens,
             elevenLabsKey = elevenLabsKey
+        )
+    }
+
+    suspend fun testApiKeyValidation(
+        apiKey: String,
+        providerMode: String,
+        customModel: String,
+        customBaseUrl: String
+    ): Result<String> {
+        return brainService.testApiKeyOrToken(
+            apiKey = apiKey,
+            providerMode = providerMode,
+            customModel = customModel,
+            customBaseUrl = customBaseUrl
         )
     }
 

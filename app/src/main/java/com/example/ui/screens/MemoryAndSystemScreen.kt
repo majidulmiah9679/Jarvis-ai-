@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +51,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -60,10 +62,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import com.example.actions.DeviceTelemetry
 import com.example.ai.JarvisBrainService
 import com.example.data.JarvisSettings
 import com.example.data.MemoryEntity
+import com.example.data.REAL_VOICE_PERSONAS
+import com.example.data.VoiceGender
 import com.example.ui.theme.JarvisAmber
 import com.example.ui.theme.JarvisCrimson
 import com.example.ui.theme.JarvisCyan
@@ -395,9 +400,14 @@ fun SystemStatusScreen(
     onUpdateLanguageMode: (String) -> Unit,
     onUpdateAutoSpeak: (Boolean) -> Unit,
     onUpdateWakeWord: (Boolean) -> Unit = {},
+    onSelectVoicePersona: (String) -> Unit = {},
+    onUpdateContinuousBackgroundMic: (Boolean) -> Unit = {},
     onTestAiBrain: () -> Unit,
+    onValidateApiKey: (suspend (apiKey: String, providerMode: String, customModel: String, customBaseUrl: String) -> Result<String>)? = null,
     modifier: Modifier = Modifier
 ) {
+    val coroutineScope = rememberCoroutineScope()
+
     var primaryKeyInput by rememberSaveable(settings.customGeminiApiKey) {
         mutableStateOf(settings.customGeminiApiKey)
     }
@@ -423,6 +433,11 @@ fun SystemStatusScreen(
     var showPrimaryKey by rememberSaveable { mutableStateOf(false) }
     var showAdvancedOptions by rememberSaveable { mutableStateOf(false) }
     var statusConfirmation by rememberSaveable { mutableStateOf("") }
+
+    // Live validation states: null = not tested, true = valid (GREEN), false = invalid (RED)
+    var keyValidationStatus by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    var keyValidationMessage by rememberSaveable { mutableStateOf("") }
+    var isValidatingKey by rememberSaveable { mutableStateOf(false) }
 
     val detectedKeyLabel = JarvisBrainService.detectKeyType(primaryKeyInput)
 
@@ -528,14 +543,30 @@ fun SystemStatusScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Main API Key / Token Field
+                    // Main API Key / Token Field with Live Green/Red Validation Status
+                    val borderColor = when (keyValidationStatus) {
+                        true -> JarvisEmerald
+                        false -> JarvisCrimson
+                        null -> StudioGoldLight
+                    }
+
                     OutlinedTextField(
                         value = primaryKeyInput,
                         onValueChange = {
                             primaryKeyInput = it
                             statusConfirmation = ""
+                            keyValidationStatus = null
+                            keyValidationMessage = ""
                         },
-                        label = { Text("Primary API Key / Token (AIza..., gsk_..., sk-...)") },
+                        label = {
+                            Text(
+                                text = when (keyValidationStatus) {
+                                    true -> "Primary API Key (✅ ভেরিফাইড ও সক্রিয়)"
+                                    false -> "Primary API Key (❌ ইনভ্যালিড বা মেয়াদ শেষ)"
+                                    null -> "Primary API Key / Token (AIza..., gsk_..., sk-...)"
+                                }
+                            )
+                        },
                         placeholder = { Text("Paste any Gemini, Groq, OpenAI, or Bearer token") },
                         singleLine = true,
                         visualTransformation = if (showPrimaryKey) {
@@ -544,27 +575,85 @@ fun SystemStatusScreen(
                             PasswordVisualTransformation()
                         },
                         trailingIcon = {
-                            IconButton(onClick = { showPrimaryKey = !showPrimaryKey }) {
-                                Icon(
-                                    imageVector = if (showPrimaryKey) {
-                                        Icons.Filled.VisibilityOff
-                                    } else {
-                                        Icons.Filled.Visibility
-                                    },
-                                    contentDescription = "Toggle Key Visibility",
-                                    tint = StudioGoldLight
-                                )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (keyValidationStatus == true) {
+                                    Icon(
+                                        imageVector = Icons.Filled.CheckCircle,
+                                        contentDescription = "Valid Key",
+                                        tint = JarvisEmerald,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                } else if (keyValidationStatus == false) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Warning,
+                                        contentDescription = "Invalid Key",
+                                        tint = JarvisCrimson,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                IconButton(onClick = { showPrimaryKey = !showPrimaryKey }) {
+                                    Icon(
+                                        imageVector = if (showPrimaryKey) {
+                                            Icons.Filled.VisibilityOff
+                                        } else {
+                                            Icons.Filled.Visibility
+                                        },
+                                        contentDescription = "Toggle Key Visibility",
+                                        tint = StudioGoldLight
+                                    )
+                                }
                             }
                         },
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = StudioGoldLight,
-                            unfocusedBorderColor = StudioGlassBorder
+                            focusedBorderColor = borderColor,
+                            unfocusedBorderColor = when (keyValidationStatus) {
+                                true -> JarvisEmerald
+                                false -> JarvisCrimson
+                                null -> StudioGlassBorder
+                            }
                         ),
                         shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("custom_gemini_api_key_input")
                     )
+
+                    // Live Status Banner right below Key Input: Green for Valid, Red for Invalid
+                    if (keyValidationMessage.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Surface(
+                            color = if (keyValidationStatus == true) {
+                                JarvisEmerald.copy(alpha = 0.16f)
+                            } else {
+                                JarvisCrimson.copy(alpha = 0.16f)
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                if (keyValidationStatus == true) JarvisEmerald else JarvisCrimson
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (keyValidationStatus == true) Icons.Filled.CheckCircle else Icons.Filled.Warning,
+                                    contentDescription = null,
+                                    tint = if (keyValidationStatus == true) JarvisEmerald else JarvisCrimson,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = keyValidationMessage,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (keyValidationStatus == true) JarvisEmerald else JarvisCrimson,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
@@ -705,9 +794,10 @@ fun SystemStatusScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
+                    // 3 Actions: Save All Keys | Verify Key Live (Green/Red) | Test AI Brain
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
                             onClick = {
@@ -731,7 +821,97 @@ fun SystemStatusScreen(
                                 .weight(1f)
                                 .testTag("save_gemini_api_key_button")
                         ) {
-                            Text("Save All Keys", fontWeight = FontWeight.Bold)
+                            Text("Save", fontWeight = FontWeight.Bold)
+                        }
+
+                        // Live Key Validation Button
+                        Button(
+                            onClick = {
+                                if (primaryKeyInput.isBlank()) {
+                                    keyValidationStatus = false
+                                    keyValidationMessage = "❌ কোনো API Key দেননি। অনুগ্রহ করে আগে Key বসান।"
+                                    return@Button
+                                }
+                                isValidatingKey = true
+                                keyValidationMessage = "Key ভেরিফাই করা হচ্ছে…"
+                                coroutineScope.launch {
+                                    val testResult = if (onValidateApiKey != null) {
+                                        onValidateApiKey(
+                                            primaryKeyInput,
+                                            providerModeInput,
+                                            customModelInput,
+                                            customBaseUrlInput
+                                        )
+                                    } else {
+                                        JarvisBrainService().testApiKeyOrToken(
+                                            apiKey = primaryKeyInput,
+                                            providerMode = providerModeInput,
+                                            customModel = customModelInput,
+                                            customBaseUrl = customBaseUrlInput
+                                        )
+                                    }
+                                    isValidatingKey = false
+                                    if (testResult.isSuccess) {
+                                        keyValidationStatus = true
+                                        keyValidationMessage = "🟢 ${testResult.getOrNull() ?: "API Key সঠিক ও সম্পূর্ণ সক্রিয়!"}"
+                                        onSaveUniversalAiConfig(
+                                            primaryKeyInput,
+                                            secondaryKeyInput,
+                                            providerModeInput,
+                                            customBaseUrlInput,
+                                            customModelInput,
+                                            maxTokensInput,
+                                            elevenLabsKeyInput
+                                        )
+                                    } else {
+                                        keyValidationStatus = false
+                                        val err = testResult.exceptionOrNull()?.localizedMessage ?: "Unknown error"
+                                        keyValidationMessage = "🔴 ভুল API Key বা সংযোগে ত্রুটি: $err"
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = when (keyValidationStatus) {
+                                    true -> JarvisEmerald
+                                    false -> JarvisCrimson
+                                    null -> JarvisElectricBlue
+                                },
+                                contentColor = JarvisIceWhite
+                            ),
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier
+                                .weight(1.3f)
+                                .testTag("verify_api_key_button")
+                        ) {
+                            if (isValidatingKey) {
+                                CircularProgressIndicator(
+                                    color = JarvisIceWhite,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("যাচাই হচ্ছে…", style = MaterialTheme.typography.labelSmall)
+                            } else {
+                                Icon(
+                                    imageVector = when (keyValidationStatus) {
+                                        true -> Icons.Filled.CheckCircle
+                                        false -> Icons.Filled.Warning
+                                        null -> Icons.Filled.Key
+                                    },
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = when (keyValidationStatus) {
+                                        true -> "সঠিক (Active)"
+                                        false -> "ভুল Key (Red)"
+                                        null -> "Check Key"
+                                    },
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            }
                         }
 
                         OutlinedButton(
@@ -753,7 +933,7 @@ fun SystemStatusScreen(
                                 .weight(1f)
                                 .testTag("test_ai_brain_button")
                         ) {
-                            Text("Test AI Brain", color = JarvisIceWhite, fontWeight = FontWeight.SemiBold)
+                            Text("Test AI", color = JarvisIceWhite, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -807,7 +987,87 @@ fun SystemStatusScreen(
                         }
                     }
 
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Text(
+                        text = "রিয়েল মানুষের ভয়েস (৩টি পুরুষ 👨 ও ৩টি নারী 👩):",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = JarvisIceWhite,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        REAL_VOICE_PERSONAS.forEach { persona ->
+                            val selected = settings.selectedVoicePersonaId == persona.id
+                            val isFemale = persona.gender == VoiceGender.FEMALE
+                            val emoji = if (isFemale) "👩" else "👨"
+                            val accent = if (isFemale) StudioGoldLight else JarvisCyan
+                            Surface(
+                                color = if (selected) accent.copy(alpha = 0.24f) else StudioGlassFill,
+                                shape = RoundedCornerShape(16.dp),
+                                border = BorderStroke(
+                                    width = if (selected) 1.5.dp else 1.dp,
+                                    color = if (selected) accent else StudioGlassBorder
+                                ),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .clickable { onSelectVoicePersona(persona.id) }
+                                    .testTag("settings_voice_persona_${persona.id}")
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        text = "$emoji ${persona.nameBn}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = JarvisIceWhite,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = persona.subtitleBn,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (selected) accent else StudioSubtleText
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "নন-স্টপ ব্যাকগ্রাউন্ড মাইক (Continuous Mic)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = JarvisIceWhite,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "একবার মাইক চালু করলে কথা শুনবে, উত্তর দেবে এবং মাঝখানে মাইক বন্ধ হবে না।",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = JarvisEmerald
+                            )
+                        }
+                        Switch(
+                            checked = settings.continuousBackgroundMic,
+                            onCheckedChange = onUpdateContinuousBackgroundMic,
+                            colors = SwitchDefaults.colors(checkedThumbColor = JarvisEmerald),
+                            modifier = Modifier.testTag("settings_continuous_mic_switch")
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),

@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
 import com.example.R
@@ -19,21 +20,27 @@ import kotlinx.coroutines.flow.asStateFlow
 
 class JarvisVoiceForegroundService : Service() {
 
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        acquireWakeLockSafely()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP_SERVICE) {
             _isRunning.value = false
+            releaseWakeLockSafely()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
 
+        acquireWakeLockSafely()
+
         val statusText = intent?.getStringExtra(EXTRA_STATUS_TEXT)
-            ?: "Hands-free voice link active • Say 'Jarvis' or tap to open HUD"
+            ?: "ব্যাকগ্রাউন্ড মাইক চালু আছে • কথা বলুন, JARVIS শুনছে ও জবাব দিচ্ছে"
         val notification = buildNotification(statusText)
 
         try {
@@ -49,6 +56,7 @@ class JarvisVoiceForegroundService : Service() {
             _isRunning.value = true
         } catch (_: Exception) {
             _isRunning.value = false
+            releaseWakeLockSafely()
             stopSelf()
         }
 
@@ -57,20 +65,49 @@ class JarvisVoiceForegroundService : Service() {
 
     override fun onDestroy() {
         _isRunning.value = false
+        releaseWakeLockSafely()
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    private fun acquireWakeLockSafely() {
+        try {
+            if (wakeLock?.isHeld == true) return
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+            wakeLock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "JarvisAI::ContinuousMicWakeLock"
+            ).apply {
+                setReferenceCounted(false)
+                // Hold up to 4 hours per session, auto-renewed on service commands
+                acquire(4 * 60 * 60 * 1000L)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun releaseWakeLockSafely() {
+        try {
+            wakeLock?.let {
+                if (it.isHeld) it.release()
+            }
+            wakeLock = null
+        } catch (_: Exception) {
+        }
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "JARVIS Hands-Free Voice Link",
+                "JARVIS Continuous Background Voice",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Displays active microphone status when JARVIS hands-free mode is running"
+                description = "Keeps JARVIS microphone active smoothly in background without interruption"
                 setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
@@ -100,13 +137,14 @@ class JarvisVoiceForegroundService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("JARVIS AI // HANDS-FREE ACTIVE")
+            .setContentTitle("JARVIS AI • অবিরাম ভয়েস ও মাইক চালু")
             .setContentText(statusText)
             .setContentIntent(pendingOpen)
             .setOngoing(true)
+            .setSilent(true)
             .addAction(
                 android.R.drawable.ic_media_pause,
-                "STOP HANDS-FREE",
+                "মাইক বন্ধ করুন (STOP)",
                 pendingStop
             )
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -122,7 +160,7 @@ class JarvisVoiceForegroundService : Service() {
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
 
-        fun start(context: Context, statusText: String = "Hands-free voice link online, Boss.") {
+        fun start(context: Context, statusText: String = "ব্যাকগ্রাউন্ড মাইক চালু আছে • JARVIS কথা শুনছে ও উত্তর দিচ্ছে") {
             val intent = Intent(context, JarvisVoiceForegroundService::class.java).apply {
                 putExtra(EXTRA_STATUS_TEXT, statusText)
             }
@@ -144,7 +182,10 @@ class JarvisVoiceForegroundService : Service() {
             try {
                 context.startService(intent)
             } catch (_: Exception) {
-                context.stopService(Intent(context, JarvisVoiceForegroundService::class.java))
+                try {
+                    context.stopService(Intent(context, JarvisVoiceForegroundService::class.java))
+                } catch (_: Exception) {
+                }
             }
             _isRunning.value = false
         }

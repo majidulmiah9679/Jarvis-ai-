@@ -15,13 +15,21 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
+import android.util.Base64
 import android.util.Log
 import com.example.BuildConfig
 import com.example.data.JarvisSettings
+import com.example.data.REAL_VOICE_PERSONAS
+import com.example.data.RealVoicePersona
+import com.example.data.VoiceGender
+import com.example.data.findVoicePersonaById
 import com.example.util.LanguageDetectionHelper
 import com.example.util.LanguageDetectionResult
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -39,6 +47,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 
 private const val TAG = "JarvisVoiceManager"
@@ -59,6 +68,8 @@ data class TtsLocaleDiagnostics(
     val isBanglaSupported: Boolean = false,
     val resolvedBanglaLocale: String = "bn-BD",
     val activeBanglaVoiceName: String = "Default",
+    val installedMaleVoicesCount: Int = 0,
+    val installedFemaleVoicesCount: Int = 0,
     val lastFallbackReason: String = "Ready as primary or automatic fallback"
 )
 
@@ -86,21 +97,28 @@ class JarvisVoiceManager(
     private var speakingWatchdogJob: Job? = null
     private var pendingUtteranceBeforeInit: QueuedSpeechRequest? = null
     private var consecutiveSilenceRetries = 0
+
     @Volatile
     private var isListeningForWakeWordOnly = false
+
     @Volatile
     private var isRecognizerActive = false
+
+    @Volatile
+    private var isContinuousMicSessionLocked = false
+
     private var pendingRetryRunnable: Runnable? = null
 
     private var preferredEnglishLocale: Locale = Locale.UK
     private var preferredBanglaLocale: Locale = Locale.forLanguageTag("bn-BD")
     private var preferredEnglishVoice: Voice? = null
     private var preferredBanglaVoice: Voice? = null
+    private var allInstalledVoices: List<Voice> = emptyList()
 
     private val okHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(25, TimeUnit.SECONDS)
+            .readTimeout(28, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .build()
     }
@@ -114,10 +132,10 @@ class JarvisVoiceManager(
     private val _partialTranscript = MutableStateFlow("")
     val partialTranscript: StateFlow<String> = _partialTranscript.asStateFlow()
 
-    private val _voiceStatusMessage = MutableStateFlow("Tap the Mic button to speak in বাংলা or English, Boss.")
+    private val _voiceStatusMessage = MutableStateFlow("মাইক্রোফোনে ট্যাপ করে কথা বলুন, Boss • বাংলা ও English সাপোর্টেড।")
     val voiceStatusMessage: StateFlow<String> = _voiceStatusMessage.asStateFlow()
 
-    private val _activeVoiceEngineLabel = MutableStateFlow("PHONE TTS // INITIALIZING")
+    private val _activeVoiceEngineLabel = MutableStateFlow("REAL HUMAN VOICE // INITIALIZING")
     val activeVoiceEngineLabel: StateFlow<String> = _activeVoiceEngineLabel.asStateFlow()
 
     private val _ttsDiagnostics = MutableStateFlow(TtsLocaleDiagnostics())
@@ -138,6 +156,7 @@ class JarvisVoiceManager(
     val lastWakeWordEvent: StateFlow<String> = _lastWakeWordEvent.asStateFlow()
 
     private var currentSettings = JarvisSettings()
+
     @Volatile
     private var onSpeakingFinishedCallback: (() -> Unit)? = null
 
@@ -150,7 +169,6 @@ class JarvisVoiceManager(
             try {
                 textToSpeech?.shutdown()
                 isTtsInitialized = false
-                // Prefer Google TTS engine if installed for best English & Bangla support, else system default
                 val googleTtsPkg = "com.google.android.tts"
                 val hasGoogleTts = try {
                     context.packageManager.getPackageInfo(googleTtsPkg, 0)
@@ -191,51 +209,29 @@ class JarvisVoiceManager(
                 }
 
                 override fun onDone(utteranceId: String?) {
-                    // Only transition to IDLE when the final segment finishes
                     if (utteranceId == null || utteranceId.endsWith("_FINAL")) {
-                        speakingWatchdogJob?.cancel()
-                        stopSpeakingWaveformAnimation()
-                        _hudState.value = VoiceHudState.IDLE
-                        val cb = onSpeakingFinishedCallback
-                        onSpeakingFinishedCallback = null
-                        if (cb != null) {
-                            mainHandler.postDelayed({ cb.invoke() }, 420L)
-                        }
+                        finishSpeakingAndResumeMicIfNeeded()
                     }
                 }
 
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) {
-                    speakingWatchdogJob?.cancel()
-                    stopSpeakingWaveformAnimation()
-                    _hudState.value = VoiceHudState.IDLE
-                    val cb = onSpeakingFinishedCallback
-                    onSpeakingFinishedCallback = null
-                    if (cb != null) {
-                        mainHandler.postDelayed({ cb.invoke() }, 420L)
-                    }
+                    finishSpeakingAndResumeMicIfNeeded()
                 }
 
                 override fun onError(utteranceId: String?, errorCode: Int) {
-                    speakingWatchdogJob?.cancel()
-                    stopSpeakingWaveformAnimation()
-                    _hudState.value = VoiceHudState.IDLE
                     _voiceStatusMessage.value = "Android TTS playback error (code $errorCode)."
-                    val cb = onSpeakingFinishedCallback
-                    onSpeakingFinishedCallback = null
-                    if (cb != null) {
-                        mainHandler.postDelayed({ cb.invoke() }, 420L)
-                    }
+                    finishSpeakingAndResumeMicIfNeeded()
                 }
             })
 
             val diag = _ttsDiagnostics.value
-            val bnStatus = if (diag.isBanglaSupported) "বাংলা Ready (${diag.resolvedBanglaLocale})" else "বাংলা Voice Pack Optional"
+            val bnStatus = if (diag.isBanglaSupported) "বাংলা Ready (${diag.resolvedBanglaLocale})" else "বাংলা Voice Ready"
+            val activePersona = findVoicePersonaById(currentSettings.selectedVoicePersonaId)
             _voiceStatusMessage.value =
-                "Android TTS Ready • English (${diag.resolvedEnglishLocale}) & $bnStatus"
+                "Real Voice Ready: ${activePersona.titleBn} • English & $bnStatus"
             updateEngineBadge(currentSettings)
 
-            // If an utterance was requested while TTS was still initializing, speak it now
             val pending = pendingUtteranceBeforeInit
             if (pending != null) {
                 pendingUtteranceBeforeInit = null
@@ -257,9 +253,37 @@ class JarvisVoiceManager(
         }
     }
 
+    private fun finishSpeakingAndResumeMicIfNeeded() {
+        speakingWatchdogJob?.cancel()
+        stopSpeakingWaveformAnimation()
+        val cb = onSpeakingFinishedCallback
+        onSpeakingFinishedCallback = null
+
+        val shouldKeepListening = isContinuousMicSessionLocked ||
+            _isLiveConversationActive.value ||
+            currentSettings.handsFreeMode
+
+        if (cb != null) {
+            mainHandler.postDelayed({ cb.invoke() }, 350L)
+        } else if (shouldKeepListening) {
+            mainHandler.postDelayed({
+                if (isContinuousMicSessionLocked || _isLiveConversationActive.value || currentSettings.handsFreeMode) {
+                    startListening(
+                        languageMode = currentSettings.languageMode,
+                        wakeWordStandbyOnly = false
+                    )
+                } else {
+                    _hudState.value = VoiceHudState.IDLE
+                }
+            }, 350L)
+        } else {
+            _hudState.value = VoiceHudState.IDLE
+        }
+    }
+
     /**
      * Probes the Android TextToSpeech engine for the best available English (UK/US/IN)
-     * and Bangla (bn-BD / bn-IN / bn) locales and high-quality voices.
+     * and Bangla (bn-BD / bn-IN / bn) locales and catalogs both Male and Female neural voices.
      */
     fun probeAndConfigureLocales() {
         val tts = textToSpeech ?: return
@@ -269,8 +293,9 @@ class JarvisVoiceManager(
         } catch (_: Exception) {
             emptyList()
         }
+        allInstalledVoices = availableVoices
 
-        // 1. Resolve best English locale (Prefer UK for authentic JARVIS cadence, fallback to US -> IN -> EN)
+        // 1. Resolve best English locale
         val englishCandidates = listOf(
             Locale.UK,
             Locale.US,
@@ -288,10 +313,13 @@ class JarvisVoiceManager(
             }
         }
         preferredEnglishLocale = resolvedEnLocale
-        preferredEnglishVoice = selectBestVoiceForLanguage(
+
+        val activePersona = findVoicePersonaById(currentSettings.selectedVoicePersonaId)
+        preferredEnglishVoice = selectBestVoiceForPersona(
             voices = availableVoices,
             langCode = "en",
-            preferredCountry = resolvedEnLocale.country
+            preferredCountry = resolvedEnLocale.country,
+            persona = activePersona
         )
 
         // 2. Resolve best Bangla locale (Prefer bn-BD -> bn-IN -> bn)
@@ -313,15 +341,16 @@ class JarvisVoiceManager(
             }
         }
 
-        // Also check if any installed voice explicitly supports Bengali ('bn' or 'ben')
-        val matchedBnVoice = selectBestVoiceForLanguage(
+        val matchedBnVoice = selectBestVoiceForPersona(
             voices = availableVoices,
             langCode = "bn",
-            preferredCountry = resolvedBnLocale.country
-        ) ?: selectBestVoiceForLanguage(
+            preferredCountry = resolvedBnLocale.country,
+            persona = activePersona
+        ) ?: selectBestVoiceForPersona(
             voices = availableVoices,
             langCode = "ben",
-            preferredCountry = "BD"
+            preferredCountry = "BD",
+            persona = activePersona
         )
 
         if (matchedBnVoice != null) {
@@ -332,30 +361,79 @@ class JarvisVoiceManager(
         preferredBanglaLocale = resolvedBnLocale
         preferredBanglaVoice = matchedBnVoice
 
-        // Default initial locale to English
-        applyLocaleAndVoiceToTts(isBangla = false)
+        applyLocaleAndVoiceToTts(isBangla = false, settings = currentSettings)
+
+        val maleCount = availableVoices.count { isVoiceLikelyMale(it) }
+        val femaleCount = availableVoices.count { isVoiceLikelyFemale(it) }
 
         _ttsDiagnostics.value = TtsLocaleDiagnostics(
             isEngineInitialized = isTtsInitialized,
             enginePackageName = enginePkg,
             isEnglishSupported = enSupported,
             resolvedEnglishLocale = resolvedEnLocale.toLanguageTag(),
-            activeEnglishVoiceName = preferredEnglishVoice?.name ?: "${resolvedEnLocale.displayLanguage} (${resolvedEnLocale.country})",
+            activeEnglishVoiceName = preferredEnglishVoice?.name ?: "${activePersona.name} (${resolvedEnLocale.country})",
             isBanglaSupported = bnSupported,
             resolvedBanglaLocale = resolvedBnLocale.toLanguageTag(),
-            activeBanglaVoiceName = preferredBanglaVoice?.name ?: if (bnSupported) {
-                "বাংলা (${resolvedBnLocale.toLanguageTag()})"
-            } else {
-                "System Default / Voice Pack Needed"
-            },
+            activeBanglaVoiceName = preferredBanglaVoice?.name ?: "${activePersona.titleBn} (${resolvedBnLocale.toLanguageTag()})",
+            installedMaleVoicesCount = maleCount,
+            installedFemaleVoicesCount = femaleCount,
             lastFallbackReason = _ttsDiagnostics.value.lastFallbackReason
         )
     }
 
-    private fun selectBestVoiceForLanguage(
+    private fun isVoiceLikelyFemale(voice: Voice): Boolean {
+        val n = voice.name.lowercase()
+        val features = try {
+            voice.features?.map { it.lowercase() }.orEmpty()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        return n.contains("female") ||
+            n.contains("#female") ||
+            features.any { it.contains("female") } ||
+            n.contains("-sfg") ||
+            n.contains("-tpf") ||
+            n.contains("-bnf") ||
+            n.contains("-baf") ||
+            n.contains("-gba") ||
+            n.contains("-gbc") ||
+            n.contains("-iob") ||
+            n.contains("wavenet-a") ||
+            n.contains("wavenet-c") ||
+            n.contains("wavenet-f") ||
+            n.contains("neural2-a") ||
+            n.contains("neural2-c") ||
+            n.contains("neural2-f")
+    }
+
+    private fun isVoiceLikelyMale(voice: Voice): Boolean {
+        val n = voice.name.lowercase()
+        val features = try {
+            voice.features?.map { it.lowercase() }.orEmpty()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        return n.contains("male") && !n.contains("female") ||
+            n.contains("#male") ||
+            features.any { it.contains("male") && !it.contains("female") } ||
+            n.contains("-iom") ||
+            n.contains("-rjs") ||
+            n.contains("-bnm") ||
+            n.contains("-bam") ||
+            n.contains("-tpd") ||
+            n.contains("-gbb") ||
+            n.contains("-gbd") ||
+            n.contains("wavenet-b") ||
+            n.contains("wavenet-d") ||
+            n.contains("neural2-b") ||
+            n.contains("neural2-d")
+    }
+
+    private fun selectBestVoiceForPersona(
         voices: List<Voice>,
         langCode: String,
-        preferredCountry: String
+        preferredCountry: String,
+        persona: RealVoicePersona
     ): Voice? {
         val matchingLang = voices.filter { voice ->
             voice.locale.language.equals(langCode, ignoreCase = true) ||
@@ -363,17 +441,41 @@ class JarvisVoiceManager(
         }
         if (matchingLang.isEmpty()) return null
 
-        return matchingLang.sortedWith(
-            compareByDescending<Voice> { it.locale.country.equals(preferredCountry, ignoreCase = true) }
+        val sortedByQuality = matchingLang.sortedWith(
+            compareByDescending<Voice> {
+                val genderMatches = when (persona.gender) {
+                    VoiceGender.FEMALE -> isVoiceLikelyFemale(it)
+                    VoiceGender.MALE -> isVoiceLikelyMale(it)
+                }
+                if (genderMatches) 2 else if (!isVoiceLikelyFemale(it) && !isVoiceLikelyMale(it)) 1 else 0
+            }
+                .thenByDescending { it.locale.country.equals(preferredCountry, ignoreCase = true) }
                 .thenByDescending { !it.isNetworkConnectionRequired }
                 .thenByDescending { it.quality }
                 .thenBy { it.latency }
-        ).firstOrNull()
+        )
+
+        val genderMatchedList = sortedByQuality.filter {
+            when (persona.gender) {
+                VoiceGender.FEMALE -> isVoiceLikelyFemale(it)
+                VoiceGender.MALE -> isVoiceLikelyMale(it)
+            }
+        }
+
+        if (genderMatchedList.isNotEmpty()) {
+            val personaVariantIndex = REAL_VOICE_PERSONAS
+                .filter { it.gender == persona.gender }
+                .indexOfFirst { it.id == persona.id }
+                .coerceAtLeast(0)
+            return genderMatchedList[personaVariantIndex % genderMatchedList.size]
+        }
+
+        return sortedByQuality.firstOrNull()
     }
 
     /**
      * Automatically detects whether the user's input is Bangla or English, updates
-     * [lastDetectedLanguage], and dynamically pre-configures the Android TTS locale.
+     * [lastDetectedLanguage], and dynamically pre-configures the Android TTS locale & voice persona.
      */
     fun detectAndConfigureLanguage(
         utterance: String,
@@ -388,7 +490,8 @@ class JarvisVoiceManager(
         mainHandler.post {
             applyLocaleAndVoiceToTts(
                 isBangla = detection.isBangla,
-                targetLocale = if (detection.isBangla) preferredBanglaLocale else preferredEnglishLocale
+                targetLocale = if (detection.isBangla) preferredBanglaLocale else preferredEnglishLocale,
+                settings = currentSettings
             )
         }
         return detection
@@ -396,19 +499,26 @@ class JarvisVoiceManager(
 
     private fun applyLocaleAndVoiceToTts(
         isBangla: Boolean,
-        targetLocale: Locale = if (isBangla) preferredBanglaLocale else preferredEnglishLocale
+        targetLocale: Locale = if (isBangla) preferredBanglaLocale else preferredEnglishLocale,
+        settings: JarvisSettings = currentSettings
     ): Boolean {
         val tts = textToSpeech ?: return false
+        val persona = findVoicePersonaById(settings.selectedVoicePersonaId)
         return try {
             if (isBangla) {
-                val bnVoice = preferredBanglaVoice
+                val bnVoice = selectBestVoiceForPersona(
+                    voices = allInstalledVoices,
+                    langCode = "bn",
+                    preferredCountry = targetLocale.country.ifBlank { "BD" },
+                    persona = persona
+                ) ?: preferredBanglaVoice
+
                 if (bnVoice != null) {
                     tts.voice = bnVoice
                     true
                 } else {
                     val res = tts.setLanguage(targetLocale)
                     if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
-                        // Try generic "bn" or "bn-IN" before falling back
                         val altRes = tts.setLanguage(Locale.forLanguageTag("bn-IN"))
                         if (altRes == TextToSpeech.LANG_MISSING_DATA || altRes == TextToSpeech.LANG_NOT_SUPPORTED) {
                             tts.setLanguage(preferredEnglishLocale)
@@ -421,7 +531,13 @@ class JarvisVoiceManager(
                     }
                 }
             } else {
-                val enVoice = preferredEnglishVoice
+                val enVoice = selectBestVoiceForPersona(
+                    voices = allInstalledVoices,
+                    langCode = "en",
+                    preferredCountry = targetLocale.country.ifBlank { "GB" },
+                    persona = persona
+                ) ?: preferredEnglishVoice
+
                 if (enVoice != null) {
                     tts.voice = enVoice
                 } else {
@@ -464,18 +580,28 @@ class JarvisVoiceManager(
     }
 
     fun updateSettings(settings: JarvisSettings) {
+        val personaChanged = currentSettings.selectedVoicePersonaId != settings.selectedVoicePersonaId
         currentSettings = settings
         updateEngineBadge(settings)
+        if (personaChanged && isTtsInitialized) {
+            mainHandler.post {
+                probeAndConfigureLocales()
+            }
+        }
     }
 
     private fun updateEngineBadge(settings: JarvisSettings) {
+        val persona = findVoicePersonaById(settings.selectedVoicePersonaId)
         val hasElevenKey = resolveElevenLabsApiKey(settings).isNotBlank()
-        _activeVoiceEngineLabel.value = if (settings.ttsEngine == "ELEVENLABS" && hasElevenKey) {
-            "ELEVENLABS + ANDROID TTS FALLBACK"
-        } else if (settings.ttsEngine == "ELEVENLABS") {
-            "ANDROID TTS FALLBACK // ACTIVE"
-        } else {
-            "ANDROID TTS (EN / বাংলা) // ONLINE"
+        val hasGeminiKey = settings.customGeminiApiKey.trim().startsWith("AIza") ||
+            settings.secondaryAiApiKey.trim().startsWith("AIza")
+        _activeVoiceEngineLabel.value = when {
+            settings.ttsEngine == "ELEVENLABS" && hasElevenKey ->
+                "ELEVENLABS • ${persona.name.uppercase()}"
+            settings.ttsEngine == "GEMINI_TTS" && hasGeminiKey ->
+                "GEMINI HD VOICE • ${persona.name.uppercase()}"
+            else ->
+                "${persona.titleBn} (${persona.gender.badgeEn}) // ONLINE"
         }
     }
 
@@ -498,13 +624,26 @@ class JarvisVoiceManager(
         }
     }
 
+    private fun resolveGeminiApiKeyForTts(settings: JarvisSettings = currentSettings): String {
+        val primary = settings.customGeminiApiKey.trim().removePrefix("Bearer ").trim()
+        if (primary.startsWith("AIza")) return primary
+        val secondary = settings.secondaryAiApiKey.trim().removePrefix("Bearer ").trim()
+        if (secondary.startsWith("AIza")) return secondary
+        return ""
+    }
+
     fun setProcessingState() {
         _hudState.value = VoiceHudState.PROCESSING
         _partialTranscript.value = ""
     }
 
     fun setIdleState() {
-        if (_hudState.value == VoiceHudState.PROCESSING) {
+        val shouldKeepListening = isContinuousMicSessionLocked ||
+            _isLiveConversationActive.value ||
+            currentSettings.handsFreeMode
+        if (shouldKeepListening) {
+            startListening(currentSettings.languageMode, wakeWordStandbyOnly = false)
+        } else if (_hudState.value == VoiceHudState.PROCESSING) {
             _hudState.value = VoiceHudState.IDLE
         }
     }
@@ -514,13 +653,22 @@ class JarvisVoiceManager(
         pendingRetryRunnable = null
     }
 
+    /**
+     * Starts listening with the microphone.
+     * When [wakeWordStandbyOnly] is false, locks in the continuous session if continuousBackgroundMic
+     * or live conversation is active, so the microphone never drops out between utterances!
+     */
     fun startListening(
         languageMode: String = currentSettings.languageMode,
         wakeWordStandbyOnly: Boolean = false
     ) {
         cancelPendingRetry()
         if (!wakeWordStandbyOnly) {
-            stopSpeaking()
+            haltPlaybackInternal()
+            if (currentSettings.continuousBackgroundMic) {
+                isContinuousMicSessionLocked = true
+                _isLiveConversationActive.value = true
+            }
         }
         isListeningForWakeWordOnly = wakeWordStandbyOnly
 
@@ -528,17 +676,20 @@ class JarvisVoiceManager(
             try {
                 if (!SpeechRecognizer.isRecognitionAvailable(context)) {
                     isRecognizerActive = false
+                    isContinuousMicSessionLocked = false
+                    _isLiveConversationActive.value = false
                     _voiceStatusMessage.value =
-                        "SpeechRecognizer service not available on this device/emulator. Use text input or install Google Speech Services."
+                        "SpeechRecognizer service not available on this device. Use text input or install Google Speech Services."
                     _hudState.value = VoiceHudState.IDLE
                     return@post
                 }
 
-                // If recognizer is already actively listening, just update the mode without cancelling/restarting
+                // If recognizer is already actively listening, just keep it running smoothly without disturbance
                 if (isRecognizerActive && speechRecognizer != null) {
                     if (!wakeWordStandbyOnly) {
                         _hudState.value = VoiceHudState.LISTENING
-                        _voiceStatusMessage.value = "Listening… Speak your command, Boss."
+                        _voiceStatusMessage.value =
+                            "মাইক সচল আছে • কথা বলুন, ${currentSettings.bossTitle} (অবিরাম লিসেনিং চালু)…"
                     }
                     return@post
                 }
@@ -551,7 +702,7 @@ class JarvisVoiceManager(
                 val localeTag = when (languageMode.uppercase()) {
                     "BN" -> "bn-BD"
                     "EN" -> "en-US"
-                    else -> Locale.getDefault().toLanguageTag().ifBlank { "en-US" }
+                    else -> Locale.getDefault().toLanguageTag().ifBlank { "bn-BD" }
                 }
 
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -562,6 +713,10 @@ class JarvisVoiceManager(
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, localeTag)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                    // Extended silence windows so the mic listens patiently without cutting off mid-thought
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 15000L)
                 }
 
                 _partialTranscript.value = ""
@@ -572,21 +727,57 @@ class JarvisVoiceManager(
                         "Wake Word Ready • Say \"Hey JARVIS\" or tap the Mic button."
                 } else {
                     _hudState.value = VoiceHudState.LISTENING
-                    _voiceStatusMessage.value = "Listening ($localeTag)… Speak your command, Boss."
+                    _voiceStatusMessage.value =
+                        "মাইক চালু আছে ($localeTag) • কথা বলুন, ${currentSettings.bossTitle} (মাইক বন্ধ হবে না)…"
                 }
                 speechRecognizer?.startListening(intent)
             } catch (e: Exception) {
                 Log.e(TAG, "Error starting SpeechRecognizer", e)
                 isRecognizerActive = false
-                _hudState.value = VoiceHudState.IDLE
-                _voiceStatusMessage.value = "Microphone error: ${e.localizedMessage}"
+                if (isContinuousMicSessionLocked) {
+                    scheduleSilentContinuousRearm(delayMs = 800L, recreateRecognizer = true)
+                } else {
+                    _hudState.value = VoiceHudState.IDLE
+                    _voiceStatusMessage.value = "Microphone error: ${e.localizedMessage}"
+                }
             }
         }
     }
 
     /**
-     * Starts a single wake-word listening session only when explicitly requested by user.
+     * Silently re-arms the SpeechRecognizer without changing _hudState to IDLE,
+     * preventing any UI jumping, flickering, or interruption while Continuous Mic is ON.
      */
+    private fun scheduleSilentContinuousRearm(
+        delayMs: Long = 350L,
+        recreateRecognizer: Boolean = false
+    ) {
+        cancelPendingRetry()
+        val runnable = Runnable {
+            pendingRetryRunnable = null
+            if (!isContinuousMicSessionLocked && !_isLiveConversationActive.value && !currentSettings.handsFreeMode) {
+                return@Runnable
+            }
+            if (_hudState.value == VoiceHudState.SPEAKING || _hudState.value == VoiceHudState.PROCESSING) {
+                return@Runnable
+            }
+            if (recreateRecognizer) {
+                try {
+                    speechRecognizer?.destroy()
+                } catch (_: Exception) {
+                }
+                speechRecognizer = null
+            }
+            isRecognizerActive = false
+            startListening(
+                languageMode = currentSettings.languageMode,
+                wakeWordStandbyOnly = false
+            )
+        }
+        pendingRetryRunnable = runnable
+        mainHandler.postDelayed(runnable, delayMs)
+    }
+
     fun startWakeWordStandby(languageMode: String = currentSettings.languageMode) {
         _isWakeWordStandbyActive.value = true
     }
@@ -600,27 +791,29 @@ class JarvisVoiceManager(
         }
     }
 
-    /**
-     * Plays a crisp futuristic HUD acknowledgment chime when "Hey JARVIS" is detected.
-     */
     fun playWakeWordChime() {
         try {
-            val toneGen = ToneGenerator(AudioManager.STREAM_MUSIC, 80)
-            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP2, 160)
+            val toneGen = ToneGenerator(AudioManager.STREAM_MUSIC, 75)
+            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP2, 140)
             mainHandler.postDelayed({
                 try {
                     toneGen.release()
                 } catch (_: Exception) {
                 }
-            }, 250L)
+            }, 220L)
         } catch (_: Exception) {
         }
     }
 
+    /**
+     * Explicitly stops listening when the user taps the Stop button.
+     */
     fun stopListening() {
         cancelPendingRetry()
         isListeningForWakeWordOnly = false
         isRecognizerActive = false
+        isContinuousMicSessionLocked = false
+        _isLiveConversationActive.value = false
         consecutiveSilenceRetries = 0
         mainHandler.post {
             try {
@@ -632,12 +825,13 @@ class JarvisVoiceManager(
                 _hudState.value = VoiceHudState.IDLE
             }
             _audioLevel.value = 0.08f
-            _voiceStatusMessage.value = "Microphone paused. Tap the Mic button whenever you want to speak."
+            _voiceStatusMessage.value = "মাইক্রোফোন থামানো হয়েছে। কথা বলতে আবার মাইকে ট্যাপ করুন।"
         }
     }
 
     fun setLiveConversationActive(active: Boolean) {
         _isLiveConversationActive.value = active
+        isContinuousMicSessionLocked = active
         if (!active) {
             cancelPendingRetry()
             consecutiveSilenceRetries = 0
@@ -645,9 +839,10 @@ class JarvisVoiceManager(
     }
 
     /**
-     * Speaks the AI response using the primary voice engine, or seamlessly falls back
-     * to the Android TextToSpeech (TTS) engine with English (`en-GB`/`en-US`) and
-     * Bangla (`bn-BD`/`bn-IN`) locale support.
+     * Speaks the AI response using the selected Real Human Voice Persona:
+     * 1. ElevenLabs Neural Voice (if selected & key present)
+     * 2. Gemini 2.5 Flash Native Audio TTS (if selected & Gemini key present)
+     * 3. Android Neural Multi-Voice Phone TTS (with automatic Male/Female voice & natural pitch/rate tuning)
      */
     fun speak(
         text: String,
@@ -662,36 +857,196 @@ class JarvisVoiceManager(
             return
         }
 
-        // Stop any previous playback WITHOUT clearing the newly registered onComplete callback
+        // Stop any active recognizer while JARVIS speaks so it doesn't hear its own voice
+        cancelPendingRetry()
+        if (isRecognizerActive) {
+            isRecognizerActive = false
+            mainHandler.post {
+                try {
+                    speechRecognizer?.cancel()
+                } catch (_: Exception) {
+                }
+            }
+        }
+
         haltPlaybackInternal()
         onSpeakingFinishedCallback = onComplete
 
-        val apiKey = resolveElevenLabsApiKey(settings)
-        if (!forcePhoneTts && settings.ttsEngine == "ELEVENLABS" && apiKey.isNotBlank()) {
-            scope.launch {
-                val success = speakWithElevenLabs(
-                    text = cleanText,
-                    languageHint = languageHint,
-                    settings = settings,
-                    voiceId = settings.elevenLabsVoiceId,
-                    apiKey = apiKey
-                )
-                if (!success) {
-                    recordFallbackReason("ElevenLabs unavailable or failed — switched to Android Phone TTS fallback")
-                    speakWithPhoneTts(cleanText, languageHint, settings, isFallback = true)
+        val persona = findVoicePersonaById(settings.selectedVoicePersonaId)
+        val elevenApiKey = resolveElevenLabsApiKey(settings)
+        val geminiApiKey = resolveGeminiApiKeyForTts(settings)
+
+        when {
+            !forcePhoneTts && settings.ttsEngine == "ELEVENLABS" && elevenApiKey.isNotBlank() -> {
+                scope.launch {
+                    val success = speakWithElevenLabs(
+                        text = cleanText,
+                        languageHint = languageHint,
+                        settings = settings,
+                        voiceId = persona.elevenLabsVoiceId,
+                        apiKey = elevenApiKey
+                    )
+                    if (!success) {
+                        recordFallbackReason("ElevenLabs unavailable — switched to Real Voice (${persona.titleBn})")
+                        speakWithPhoneTts(cleanText, languageHint, settings, isFallback = true)
+                    }
                 }
             }
-        } else {
-            val isFallback = !forcePhoneTts && settings.ttsEngine == "ELEVENLABS" && apiKey.isBlank()
-            if (isFallback) {
-                recordFallbackReason("ElevenLabs API key not set — using Android Phone TTS fallback")
+
+            !forcePhoneTts && settings.ttsEngine == "GEMINI_TTS" && geminiApiKey.isNotBlank() -> {
+                scope.launch {
+                    val success = speakWithGeminiNativeTts(
+                        text = cleanText,
+                        persona = persona,
+                        apiKey = geminiApiKey,
+                        languageHint = languageHint,
+                        settings = settings
+                    )
+                    if (!success) {
+                        recordFallbackReason("Gemini Audio TTS unavailable — switched to Real Voice (${persona.titleBn})")
+                        speakWithPhoneTts(cleanText, languageHint, settings, isFallback = true)
+                    }
+                }
             }
-            speakWithPhoneTts(cleanText, languageHint, settings, isFallback = isFallback)
+
+            else -> {
+                speakWithPhoneTts(cleanText, languageHint, settings, isFallback = false)
+            }
         }
     }
 
     private fun recordFallbackReason(reason: String) {
         _ttsDiagnostics.value = _ttsDiagnostics.value.copy(lastFallbackReason = reason)
+    }
+
+    /**
+     * Synthesizes ultra-natural human speech using Gemini's `gemini-2.5-flash-preview-tts`
+     * with prebuilt Male (`Charon`, `Fenrir`, `Puck`) and Female (`Aoede`, `Kore`, `Leda`) voices.
+     */
+    private suspend fun speakWithGeminiNativeTts(
+        text: String,
+        persona: RealVoicePersona,
+        apiKey: String,
+        languageHint: String,
+        settings: JarvisSettings
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            withContext(Dispatchers.Main) {
+                _hudState.value = VoiceHudState.SPEAKING
+                _voiceStatusMessage.value = "Synthesizing Gemini Real Voice (${persona.titleBn})…"
+            }
+
+            val url =
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=$apiKey"
+
+            val payload = JSONObject().apply {
+                put(
+                    "contents",
+                    JSONArray().put(
+                        JSONObject().put(
+                            "parts",
+                            JSONArray().put(JSONObject().put("text", text))
+                        )
+                    )
+                )
+                put(
+                    "generationConfig",
+                    JSONObject().apply {
+                        put("responseModalities", JSONArray().put("AUDIO"))
+                        put(
+                            "speechConfig",
+                            JSONObject().put(
+                                "voiceConfig",
+                                JSONObject().put(
+                                    "prebuiltVoiceConfig",
+                                    JSONObject().put("voiceName", persona.geminiVoiceName)
+                                )
+                            )
+                        )
+                    }
+                )
+            }
+
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("Content-Type", "application/json")
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = okHttpClient.newCall(request).execute()
+            val bodyStr = response.body?.string().orEmpty()
+            response.close()
+
+            if (!response.isSuccessful) {
+                Log.w(TAG, "Gemini TTS HTTP ${response.code}: ${bodyStr.take(120)}")
+                return@withContext false
+            }
+
+            val root = JSONObject(bodyStr)
+            val base64Audio = root.optJSONArray("candidates")
+                ?.optJSONObject(0)
+                ?.optJSONObject("content")
+                ?.optJSONArray("parts")
+                ?.optJSONObject(0)
+                ?.optJSONObject("inlineData")
+                ?.optString("data")
+                .orEmpty()
+
+            if (base64Audio.isBlank()) return@withContext false
+
+            val pcmBytes = Base64.decode(base64Audio, Base64.DEFAULT)
+            if (pcmBytes.isEmpty()) return@withContext false
+
+            val wavFile = File(context.cacheDir, "jarvis_gemini_real_voice.wav")
+            writePcmToWavFile(pcmBytes, wavFile, sampleRate = 24000, channels = 1, bitsPerSample = 16)
+
+            withContext(Dispatchers.Main) {
+                playAudioFileWithFallback(
+                    file = wavFile,
+                    fallbackText = text,
+                    languageHint = languageHint,
+                    settings = settings,
+                    engineBadge = "Gemini Real Voice (${persona.titleBn})"
+                )
+            }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Gemini Native TTS error — falling back to Phone Neural TTS", e)
+            false
+        }
+    }
+
+    private fun writePcmToWavFile(
+        pcmData: ByteArray,
+        wavFile: File,
+        sampleRate: Int = 24000,
+        channels: Int = 1,
+        bitsPerSample: Int = 16
+    ) {
+        val byteRate = sampleRate * channels * bitsPerSample / 8
+        val blockAlign = (channels * bitsPerSample / 8).toShort()
+        val totalDataLen = pcmData.size + 36
+
+        val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN).apply {
+            put("RIFF".toByteArray(Charsets.US_ASCII))
+            putInt(totalDataLen)
+            put("WAVE".toByteArray(Charsets.US_ASCII))
+            put("fmt ".toByteArray(Charsets.US_ASCII))
+            putInt(16) // Subchunk1Size for PCM
+            putShort(1.toShort()) // AudioFormat 1 = PCM
+            putShort(channels.toShort())
+            putInt(sampleRate)
+            putInt(byteRate)
+            putShort(blockAlign)
+            putShort(bitsPerSample.toShort())
+            put("data".toByteArray(Charsets.US_ASCII))
+            putInt(pcmData.size)
+        }.array()
+
+        FileOutputStream(wavFile).use { fos ->
+            fos.write(header)
+            fos.write(pcmData)
+        }
     }
 
     private suspend fun speakWithElevenLabs(
@@ -702,12 +1057,13 @@ class JarvisVoiceManager(
         apiKey: String
     ): Boolean = withContext(Dispatchers.IO) {
         try {
+            val persona = findVoicePersonaById(settings.selectedVoicePersonaId)
             withContext(Dispatchers.Main) {
                 _hudState.value = VoiceHudState.SPEAKING
-                _voiceStatusMessage.value = "Synthesizing ElevenLabs Neural Voice ($voiceId)…"
+                _voiceStatusMessage.value = "Synthesizing ElevenLabs Real Voice (${persona.titleBn})…"
             }
 
-            val safeVoiceId = voiceId.trim().ifBlank { "JBFqnCBsd6RMkjVDRZzb" }
+            val safeVoiceId = voiceId.trim().ifBlank { persona.elevenLabsVoiceId }
             val url = "https://api.elevenlabs.io/v1/text-to-speech/$safeVoiceId?output_format=mp3_44100_128"
 
             val payload = JSONObject().apply {
@@ -716,9 +1072,9 @@ class JarvisVoiceManager(
                 put(
                     "voice_settings",
                     JSONObject().apply {
-                        put("stability", 0.55)
-                        put("similarity_boost", 0.80)
-                        put("style", 0.25)
+                        put("stability", 0.52)
+                        put("similarity_boost", 0.82)
+                        put("style", 0.28)
                         put("use_speaker_boost", true)
                     }
                 )
@@ -750,25 +1106,27 @@ class JarvisVoiceManager(
             FileOutputStream(outFile).use { it.write(bytes) }
 
             withContext(Dispatchers.Main) {
-                playMp3FileWithFallback(
+                playAudioFileWithFallback(
                     file = outFile,
                     fallbackText = text,
                     languageHint = languageHint,
-                    settings = settings
+                    settings = settings,
+                    engineBadge = "ElevenLabs (${persona.titleBn})"
                 )
             }
             true
         } catch (e: Exception) {
-            Log.e(TAG, "ElevenLabs synthesis failed — triggering Android TTS fallback", e)
+            Log.e(TAG, "ElevenLabs synthesis failed — triggering Phone Neural TTS fallback", e)
             false
         }
     }
 
-    private fun playMp3FileWithFallback(
+    private fun playAudioFileWithFallback(
         file: File,
         fallbackText: String,
         languageHint: String,
-        settings: JarvisSettings
+        settings: JarvisSettings,
+        engineBadge: String
     ) {
         try {
             mediaPlayer?.release()
@@ -782,23 +1140,20 @@ class JarvisVoiceManager(
                 setDataSource(file.absolutePath)
                 setOnPreparedListener { player ->
                     _hudState.value = VoiceHudState.SPEAKING
-                    _voiceStatusMessage.value = "JARVIS Speaking (ElevenLabs Neural Audio)"
+                    _voiceStatusMessage.value = "JARVIS কথা বলছে ($engineBadge)"
                     startSpeakingWaveformAnimation()
                     player.start()
                 }
                 setOnCompletionListener { player ->
-                    stopSpeakingWaveformAnimation()
-                    _hudState.value = VoiceHudState.IDLE
-                    _voiceStatusMessage.value = "ElevenLabs voice transmission complete."
                     player.release()
                     if (mediaPlayer == player) mediaPlayer = null
-                    onSpeakingFinishedCallback?.invoke()
+                    finishSpeakingAndResumeMicIfNeeded()
                 }
                 setOnErrorListener { player, what, extra ->
                     Log.e(TAG, "MediaPlayer error what=$what extra=$extra — falling back to Phone TTS")
                     player.release()
                     if (mediaPlayer == player) mediaPlayer = null
-                    recordFallbackReason("MediaPlayer stream error ($what) — switched to Android Phone TTS")
+                    recordFallbackReason("MediaPlayer stream error ($what) — switched to Android Neural TTS")
                     speakWithPhoneTts(fallbackText, languageHint, settings, isFallback = true)
                     true
                 }
@@ -806,17 +1161,16 @@ class JarvisVoiceManager(
             mediaPlayer = mp
             mp.prepareAsync()
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to play ElevenLabs MP3 — falling back to Phone TTS", e)
-            recordFallbackReason("Audio player exception — switched to Android Phone TTS")
+            Log.e(TAG, "Failed to play synthesized audio — falling back to Phone TTS", e)
+            recordFallbackReason("Audio player exception — switched to Android Neural TTS")
             speakWithPhoneTts(fallbackText, languageHint, settings, isFallback = true)
         }
     }
 
     /**
-     * Speaks text using Android's native TextToSpeech engine, automatically detecting
-     * Bangla Unicode script (`\u0980`..`\u09FF`) or language hint (`"bn"` vs `"en"`),
-     * applying the appropriate locale (`bn-BD`/`bn-IN` or `en-GB`/`en-US`), and chunking
-     * long responses safely.
+     * Speaks text using Android's Neural TextToSpeech engine, matching the selected
+     * Male or Female [RealVoicePersona] (`jarvis_male_classic`, `friday_female_clear`, etc.)
+     * and automatically switching between Bangla (`bn-BD`/`bn-IN`) and English (`en-GB`/`en-US`).
      */
     private fun speakWithPhoneTts(
         text: String,
@@ -827,7 +1181,6 @@ class JarvisVoiceManager(
         mainHandler.post {
             val tts = textToSpeech
             if (!isTtsInitialized || tts == null) {
-                // Queue utterance until onInit completes
                 pendingUtteranceBeforeInit = QueuedSpeechRequest(
                     text = text,
                     languageHint = languageHint,
@@ -840,6 +1193,7 @@ class JarvisVoiceManager(
                 return@post
             }
 
+            val persona = findVoicePersonaById(settings.selectedVoicePersonaId)
             val resolvedLocale = LanguageDetectionHelper.resolveDynamicTtsLocale(
                 textToSpeak = text,
                 languageHint = languageHint,
@@ -848,22 +1202,22 @@ class JarvisVoiceManager(
             )
             val containsBangla = LanguageDetectionHelper.isBanglaUtterance(text, languageHint)
 
-            val localeApplied = applyLocaleAndVoiceToTts(
+            applyLocaleAndVoiceToTts(
                 isBangla = containsBangla,
-                targetLocale = resolvedLocale
+                targetLocale = resolvedLocale,
+                settings = settings
             )
-            tts.setSpeechRate(settings.speechRate.coerceIn(0.5f, 2.0f))
-            tts.setPitch(settings.speechPitch.coerceIn(0.5f, 2.0f))
 
-            val modeLabel = if (isFallback) "Android TTS Fallback" else "Android Phone TTS"
-            val langBadge = if (containsBangla) {
-                if (localeApplied) "বাংলা (${resolvedLocale.toLanguageTag()})" else "বাংলা (Default Voice)"
-            } else {
-                "English (${resolvedLocale.toLanguageTag()})"
-            }
+            // Apply the user's or persona's natural human rate & pitch
+            val effectiveRate = settings.speechRate.coerceIn(0.5f, 2.0f)
+            val effectivePitch = settings.speechPitch.coerceIn(0.5f, 2.0f)
+            tts.setSpeechRate(effectiveRate)
+            tts.setPitch(effectivePitch)
 
+            val langBadge = if (containsBangla) "বাংলা" else "English"
             _hudState.value = VoiceHudState.SPEAKING
-            _voiceStatusMessage.value = "JARVIS Speaking ($modeLabel • $langBadge)"
+            _voiceStatusMessage.value =
+                "JARVIS কথা বলছে • ${persona.titleBn} ($langBadge)"
             startSpeakingWaveformAnimation()
 
             val segments = splitIntoSafeTtsSegments(text)
@@ -873,7 +1227,6 @@ class JarvisVoiceManager(
                 val suffix = if (index == segments.lastIndex) "_FINAL" else "_PART_$index"
                 val utteranceId = "${UUID.randomUUID()}$suffix"
 
-                // If mixed bilingual sentences exist, switch locale per sentence dynamically
                 val segmentIsBangla = LanguageDetectionHelper.isBanglaUtterance(segment, languageHint)
                 val segmentLocale = LanguageDetectionHelper.resolveDynamicTtsLocale(
                     textToSpeak = segment,
@@ -883,8 +1236,11 @@ class JarvisVoiceManager(
                 )
                 applyLocaleAndVoiceToTts(
                     isBangla = segmentIsBangla,
-                    targetLocale = segmentLocale
+                    targetLocale = segmentLocale,
+                    settings = settings
                 )
+                tts.setSpeechRate(effectiveRate)
+                tts.setPitch(effectivePitch)
 
                 val params = Bundle().apply {
                     putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
@@ -896,37 +1252,19 @@ class JarvisVoiceManager(
             }
 
             if (hasError) {
-                speakingWatchdogJob?.cancel()
-                stopSpeakingWaveformAnimation()
-                _hudState.value = VoiceHudState.IDLE
                 _voiceStatusMessage.value = "Android TTS playback encountered an engine error."
-                val cb = onSpeakingFinishedCallback
-                onSpeakingFinishedCallback = null
-                if (cb != null) {
-                    mainHandler.postDelayed({ cb.invoke() }, 450L)
-                }
+                finishSpeakingAndResumeMicIfNeeded()
             } else {
-                // Safety watchdog in case the device/emulator TTS engine finishes without firing onDone
                 speakingWatchdogJob?.cancel()
-                val estimatedMs = (text.length * 75L).coerceIn(2400L, 14000L)
+                val estimatedMs = (text.length * 80L).coerceIn(2600L, 16000L)
                 speakingWatchdogJob = scope.launch {
                     delay(estimatedMs)
                     if (_hudState.value == VoiceHudState.SPEAKING) {
-                        stopSpeakingWaveformAnimation()
-                        _hudState.value = VoiceHudState.IDLE
-                        val cb = onSpeakingFinishedCallback
-                        onSpeakingFinishedCallback = null
-                        if (cb != null) {
-                            mainHandler.post { cb.invoke() }
-                        }
+                        finishSpeakingAndResumeMicIfNeeded()
                     }
                 }
             }
         }
-    }
-
-    private fun containsBanglaScript(input: String): Boolean {
-        return LanguageDetectionHelper.isBanglaUtterance(input)
     }
 
     private fun splitIntoSafeTtsSegments(text: String): List<String> {
@@ -940,7 +1278,6 @@ class JarvisVoiceManager(
             return listOf(cleaned)
         }
 
-        // Split by English and Bangla sentence terminators ('.', '!', '?', '।', '\n')
         val rawSentences = cleaned.split(Regex("(?<=[.!?।\n])\\s+"))
             .map { it.trim() }
             .filter { it.isNotBlank() }
@@ -991,8 +1328,12 @@ class JarvisVoiceManager(
             } catch (_: Exception) {
             }
             if (_hudState.value == VoiceHudState.SPEAKING) {
-                _hudState.value = VoiceHudState.IDLE
-                _voiceStatusMessage.value = "Voice output halted by Boss."
+                if (isContinuousMicSessionLocked || _isLiveConversationActive.value) {
+                    scheduleSilentContinuousRearm(delayMs = 350L)
+                } else {
+                    _hudState.value = VoiceHudState.IDLE
+                    _voiceStatusMessage.value = "ভয়েস আউটপুট থামানো হয়েছে।"
+                }
             }
             _audioLevel.value = 0.08f
         }
@@ -1037,7 +1378,6 @@ class JarvisVoiceManager(
             override fun onRmsChanged(rmsdB: Float) {
                 if (!isListeningForWakeWordOnly && _hudState.value == VoiceHudState.LISTENING) {
                     val normalized = ((rmsdB + 2f) / 12f).coerceIn(0.08f, 1.0f)
-                    // Smooth audio level so UI never jitters or bounces
                     _audioLevel.value = (_audioLevel.value * 0.65f + normalized * 0.35f).coerceIn(0.08f, 1.0f)
                 }
             }
@@ -1050,20 +1390,26 @@ class JarvisVoiceManager(
             }
 
             override fun onError(error: Int) {
-                // If stopListening() already deactivated the recognizer, ignore trailing ERROR_CLIENT
                 if (!isRecognizerActive && error == SpeechRecognizer.ERROR_CLIENT) {
                     return
                 }
                 isRecognizerActive = false
-                isListeningForWakeWordOnly = false
                 _audioLevel.value = 0.08f
-                _hudState.value = VoiceHudState.IDLE
 
-                // If recognizer got wedged (BUSY / CLIENT / SERVER_DISCONNECTED), recreate it cleanly for next tap
-                if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
+                // Fatal permission error cannot be retried until user grants permission
+                if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                    isContinuousMicSessionLocked = false
+                    _isLiveConversationActive.value = false
+                    _hudState.value = VoiceHudState.IDLE
+                    _voiceStatusMessage.value = "মাইক্রোফোন পারমিশন প্রয়োজন (Microphone permission required)।"
+                    return
+                }
+
+                val needsRecognizerReset = error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
                     error == SpeechRecognizer.ERROR_CLIENT ||
                     error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED
-                ) {
+
+                if (needsRecognizerReset) {
                     try {
                         speechRecognizer?.destroy()
                     } catch (_: Exception) {
@@ -1071,13 +1417,35 @@ class JarvisVoiceManager(
                     speechRecognizer = null
                 }
 
+                // CRITICAL: If Continuous Mic / Live Conversation is active, NEVER drop to IDLE on silence!
+                // Keep _hudState = LISTENING steady and smoothly re-arm listening so the mic never stops!
+                val shouldKeepMicAlive = isContinuousMicSessionLocked ||
+                    _isLiveConversationActive.value ||
+                    currentSettings.handsFreeMode
+
+                if (shouldKeepMicAlive &&
+                    _hudState.value != VoiceHudState.SPEAKING &&
+                    _hudState.value != VoiceHudState.PROCESSING
+                ) {
+                    _hudState.value = VoiceHudState.LISTENING
+                    _voiceStatusMessage.value =
+                        "মাইক সচল আছে • কথা বলুন, ${currentSettings.bossTitle} (অবিরাম লিসেনিং চালু)…"
+                    val retryDelay = if (needsRecognizerReset) 650L else 350L
+                    scheduleSilentContinuousRearm(
+                        delayMs = retryDelay,
+                        recreateRecognizer = needsRecognizerReset
+                    )
+                    return
+                }
+
+                isListeningForWakeWordOnly = false
+                _hudState.value = VoiceHudState.IDLE
                 val errorText = when (error) {
-                    SpeechRecognizer.ERROR_NO_MATCH -> "No speech heard. Tap the Mic button to speak, Boss."
-                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Mic paused after silence. Tap the Mic button to speak, Boss."
-                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required for voice commands."
+                    SpeechRecognizer.ERROR_NO_MATCH -> "কোনো কথা শোনা যায়নি। কথা বলতে মাইকে ট্যাপ করুন, Boss।"
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "মাইক বিরতিতে আছে। কথা বলতে মাইকে ট্যাপ করুন, Boss।"
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
-                        "Speech recognition network error. Check connectivity."
-                    else -> "Voice ready • Tap the Mic button to speak."
+                        "নেটওয়ার্ক সংযোগ চেক করুন (Speech recognition network error)।"
+                    else -> "ভয়েস প্রস্তুত • কথা বলতে মাইকে ট্যাপ করুন।"
                 }
                 _voiceStatusMessage.value = errorText
             }
@@ -1090,11 +1458,15 @@ class JarvisVoiceManager(
                 _partialTranscript.value = ""
 
                 if (primaryTranscript.isBlank()) {
-                    _hudState.value = VoiceHudState.IDLE
+                    if (isContinuousMicSessionLocked || _isLiveConversationActive.value || currentSettings.handsFreeMode) {
+                        _hudState.value = VoiceHudState.LISTENING
+                        scheduleSilentContinuousRearm(delayMs = 300L)
+                    } else {
+                        _hudState.value = VoiceHudState.IDLE
+                    }
                     return
                 }
 
-                // Check all recognition alternatives for "Hey JARVIS" wake word
                 var wakeMatch: WakeWordMatchResult = WakeWordMatchResult.NoWakeWord
                 for (candidate in matches) {
                     val analyzed = WakeWordDetector.analyzeTranscript(candidate)
@@ -1106,14 +1478,14 @@ class JarvisVoiceManager(
 
                 when (val matched = wakeMatch) {
                     is WakeWordMatchResult.WakeWordOnly -> {
-                        // User said "Hey JARVIS" / "হেই জারভিস" to trigger AI listening mode!
                         consecutiveSilenceRetries = 0
                         isListeningForWakeWordOnly = false
+                        isContinuousMicSessionLocked = true
                         _isLiveConversationActive.value = true
                         _lastWakeWordEvent.value = matched.matchedTrigger
                         playWakeWordChime()
                         _voiceStatusMessage.value =
-                            "Wake Word \"${matched.matchedTrigger}\" detected! Listening for your command, Boss…"
+                            "Wake Word \"${matched.matchedTrigger}\" detected! Listening continuously, Boss…"
                         if (onWakeWordTriggered != null) {
                             onWakeWordTriggered.invoke(matched.matchedTrigger, matched.isBanglaTrigger, null)
                         } else {
@@ -1122,9 +1494,9 @@ class JarvisVoiceManager(
                     }
 
                     is WakeWordMatchResult.WakeWordWithCommand -> {
-                        // User said "Hey JARVIS <command>" in one continuous phrase!
                         consecutiveSilenceRetries = 0
                         isListeningForWakeWordOnly = false
+                        isContinuousMicSessionLocked = true
                         _isLiveConversationActive.value = true
                         _lastWakeWordEvent.value = matched.matchedTrigger
                         playWakeWordChime()
@@ -1144,7 +1516,7 @@ class JarvisVoiceManager(
                         isListeningForWakeWordOnly = false
                         val detected = detectAndConfigureLanguage(primaryTranscript, currentSettings.languageMode)
                         _voiceStatusMessage.value =
-                            "Detected ${detected.language.nativeLabel} (${detected.ttsLocale.toLanguageTag()}) — processing…"
+                            "শোনা হয়েছে (${detected.language.nativeLabel}): “$primaryTranscript” — উত্তর তৈরি হচ্ছে…"
                         _hudState.value = VoiceHudState.PROCESSING
                         onSpeechResult(primaryTranscript)
                     }
